@@ -11,9 +11,7 @@ defineOptions({
 const authStore = useAuthStore();
 const { toLogin } = useRouterPush();
 
-function loginOrRegister() {
-  toLogin();
-}
+// 已移除未使用的 loginOrRegister，避免 TS6133
 
 function logout() {
   Modal.confirm({
@@ -29,23 +27,14 @@ function logout() {
 </script>
 
 <template>
-  <AButton v-if="!authStore.isLogin" @click="loginOrRegister">{{ $t('page.login.common.loginOrRegister') }}</AButton>
-  <ADropdown v-else placement="bottomRight" trigger="click">
+  <!-- 隐藏登录按钮，直接展示用户下拉（未登录时显示占位用户名） -->
+  <ADropdown placement="bottomRight" trigger="click">
     <ButtonIcon>
       <SvgIcon icon="ph:user-circle" class="text-icon-large" />
-      <span class="text-16px font-medium">{{ authStore.userInfo.userName }}</span>
+      <span class="text-16px font-medium">{{ authStore.userInfo.userName || 'Guest' }}</span>
     </ButtonIcon>
     <template #overlay>
       <AMenu>
-        <!--
- <AMenuItem @click="routerPushByKey('user-center')">
-          <div class="flex-center gap-8px">
-            <SvgIcon icon="ph:user-circle" class="text-icon" />
-            {{ $t('common.userCenter') }}
-          </div>
-        </AMenuItem>
-        <AMenuDivider /> 
--->
         <AMenuItem @click="logout">
           <div class="flex-center gap-8px">
             <SvgIcon icon="ph:sign-out" class="text-icon" />

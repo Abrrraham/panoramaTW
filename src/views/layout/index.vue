@@ -200,6 +200,13 @@
                 </div>
               </div>
 
+              <!-- 比例尺元素特殊属性 -->
+              <div v-if="selectedElement.type === 'scalebar'" class="mt-2">
+                <label class="text-xs text-gray-400">比例尺分母 (1:N)</label>
+                <AInputNumber :value="scaleInputValue" @update:value="onScaleInputChange" size="small" class="w-full" :min="10" :step="10" />
+                <div class="text-xs text-gray-500 mt-1">未设置时将根据框选范围与地图框估算</div>
+              </div>
+
               <!-- 文本元素特殊属性 -->
               <div v-if="selectedElement.type === 'text'">
                 <label class="text-xs text-gray-400">文本内容</label>
@@ -264,12 +271,22 @@
               @mousedown="startDrag($event, element)"
             >
               <!-- 地图框 -->
-              <div v-if="element.type === 'map'" class="map-frame border-2 border-dashed border-gray-400 h-full flex items-center justify-center bg-gray-50">
-                <div class="text-center text-gray-600">
-                  <Icon icon="material-symbols:map-outline" class="text-4xl mb-2" />
-                  <div class="text-sm">地图视图</div>
-                  <div class="text-xs text-gray-500">{{ element.width }} × {{ element.height }}</div>
-                </div>
+              <div v-if="element.type === 'map'" class="map-frame border-2 border-dashed border-gray-400 h-full flex items-center justify-center bg-gray-50 overflow-hidden">
+                <template v-if="hasBBox">
+                  <MapFrame
+                    :bbox="bboxRef!"
+                    :width="element.width"
+                    :height="element.height"
+                    :ref="(el: any) => setMapFrameRef(element.id, el)"
+                  />
+                </template>
+                <template v-else>
+                  <div class="text-center text-gray-600">
+                    <Icon icon="material-symbols:map-outline" class="text-4xl mb-2" />
+                    <div class="text-sm">地图视图</div>
+                    <div class="text-xs text-gray-500">{{ element.width }} × {{ element.height }}</div>
+                  </div>
+                </template>
               </div>
 
               <!-- 图例 -->
@@ -293,16 +310,17 @@
 
               <!-- 比例尺 -->
               <div v-else-if="element.type === 'scalebar'" class="scalebar-frame h-full flex items-center">
-                <div class="scale-bar">
-                  <div class="flex">
-                    <div class="w-12 h-4 border-l border-b border-t border-black bg-white"></div>
-                    <div class="w-12 h-4 border-r border-b border-t border-black bg-black"></div>
-                    <div class="w-12 h-4 border-r border-b border-t border-black bg-white"></div>
+                <div class="scale-bar w-full">
+                  <div class="flex" :style="{ width: getScaleBarInnerWidthPx(element) + 'px' }">
+                    <div class="flex-1 h-4 border-l border-b border-t border-black bg-white"></div>
+                    <div class="flex-1 h-4 border-b border-t border-black bg-black"></div>
+                    <div class="flex-1 h-4 border-b border-t border-black bg-white"></div>
+                    <div class="flex-1 h-4 border-r border-b border-t border-black bg-black"></div>
                   </div>
-                  <div class="flex text-xs justify-between mt-1">
+                  <div class="flex text-xs justify-between mt-1" :style="{ width: getScaleBarInnerWidthPx(element) + 'px' }">
                     <span>0</span>
-                    <span>50</span>
-                    <span>100 km</span>
+                    <span>{{ getScaleBarLabels(element).mid }}</span>
+                    <span>{{ getScaleBarLabels(element).end }}</span>
                   </div>
                 </div>
               </div>
@@ -310,8 +328,8 @@
               <!-- 指北针 -->
               <div v-else-if="element.type === 'north'" class="north-arrow h-full flex items-center justify-center">
                 <div class="text-center">
-                  <Icon icon="material-symbols:navigation-outline" class="text-3xl transform rotate-0" />
-                  <div class="text-xs mt-1">N</div>
+                  <Icon icon="material-symbols:navigation-outline" class="text-3xl transform rotate-0 text-black" />
+                  <div class="text-xs mt-1 text-black">N</div>
                 </div>
               </div>
 
@@ -344,12 +362,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { message } from 'ant-design-vue';
 import { Icon } from '@iconify/vue';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
+import MapFrame from './components/MapFrame.vue';
 
 // 路由
 const router = useRouter();
@@ -361,6 +380,88 @@ const pageSettings = reactive({
   width: 794, // A4宽度(像素)
   height: 1123 // A4高度(像素)
 });
+
+// 纸张尺寸（96dpi）
+const PAGE_SIZES_PX: Record<string, { width: number; height: number }> = {
+  A4: { width: 794, height: 1123 },     // 8.27 × 11.69 in
+  A3: { width: 1123, height: 1587 },    // 11.69 × 16.54 in
+  A2: { width: 1587, height: 2245 },    // 16.54 × 23.39 in
+  Letter: { width: 816, height: 1056 }  // 8.5 × 11 in
+};
+
+// 切换纸张大小时，更新画布像素尺寸（保持 portrait 为基准）
+watch(() => pageSettings.size, (newSize) => {
+  if (newSize === 'custom') return;
+  const preset = PAGE_SIZES_PX[newSize] || PAGE_SIZES_PX.A4;
+  pageSettings.width = preset.width;
+  pageSettings.height = preset.height;
+});
+
+// 如果从主图传来bbox参数，自动插入一个地图框并标注范围说明
+const route = useRoute();
+const searchQS = new URLSearchParams(location.search);
+const bboxRef = ref<{ minx: number; miny: number; maxx: number; maxy: number } | null>(null);
+const readBBoxFromRoute = () => {
+  const minx = Number((route.query.minx as string) ?? searchQS.get('minx'));
+  const miny = Number((route.query.miny as string) ?? searchQS.get('miny'));
+  const maxx = Number((route.query.maxx as string) ?? searchQS.get('maxx'));
+  const maxy = Number((route.query.maxy as string) ?? searchQS.get('maxy'));
+  const ok = [minx, miny, maxx, maxy].every(v => Number.isFinite(v));
+  bboxRef.value = ok ? { minx, miny, maxx, maxy } : null;
+};
+readBBoxFromRoute();
+const hasBBox = computed(() => !!bboxRef.value);
+
+// 打印/画布 DPI（CSS 像素）
+const PRINT_DPI = 96;
+// 后端或路由提供的真实比例尺分母（1:denominator）
+const scaleDenominator = ref<number | null>(null);
+function readScaleFromRouteOrSession() {
+  const qsScale = Number((route.query.scale as string) ?? searchQS.get('scale'));
+  if (Number.isFinite(qsScale) && qsScale > 0) {
+    scaleDenominator.value = qsScale;
+    return;
+  }
+  const ss = Number(sessionStorage.getItem('layout_scale_denominator') || '');
+  if (Number.isFinite(ss) && ss > 0) {
+    scaleDenominator.value = ss;
+  }
+}
+readScaleFromRouteOrSession();
+
+// 面板输入绑定：比例尺分母(1:N)
+const scaleDenominatorValue = computed<number | null>({
+  get() {
+    return scaleDenominator.value ?? null;
+  },
+  set(val) {
+    const v = Number(val);
+    if (Number.isFinite(v) && v > 0) {
+      scaleDenominator.value = v;
+      try { sessionStorage.setItem('layout_scale_denominator', String(v)); } catch {}
+    } else {
+      scaleDenominator.value = null;
+      try { sessionStorage.removeItem('layout_scale_denominator'); } catch {}
+    }
+  }
+});
+
+// 为 AInputNumber 提供 string|number，避免传递 null
+const scaleInputValue = computed<string | number>(() => {
+  return scaleDenominatorValue.value == null ? '' : scaleDenominatorValue.value;
+});
+function onScaleInputChange(val: any) {
+  if (val === '' || val == null) {
+    scaleDenominatorValue.value = null;
+    return;
+  }
+  const n = Number(val);
+  scaleDenominatorValue.value = Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// 预留：如需使用外部静态底图，可在此实现（当前未使用以避免 noUnusedLocals 报错）
+
+// 注意：不要在 layoutElements 定义前写入，它会导致“Cannot access before initialization”
 
 // 布局元素接口
 interface LayoutElement {
@@ -381,14 +482,154 @@ const layoutElements = ref<LayoutElement[]>([]);
 const selectedElement = ref<LayoutElement | null>(null);
 const canvasRef = ref<HTMLElement>();
 
+// 根据比例或 bbox+地图框估算：每像素对应的真实米数
+function metersPerPixelForLayout(): number | null {
+  if (scaleDenominator.value && scaleDenominator.value > 0) {
+    return (0.0254 / PRINT_DPI) * scaleDenominator.value;
+  }
+  if (bboxRef.value) {
+    const b = bboxRef.value;
+    const mapEl = layoutElements.value.find(el => el.type === 'map');
+    if (!mapEl || mapEl.width <= 0) return null;
+    const centerLat = (b.miny + b.maxy) / 2;
+    const metersPerDegreeLon = 111320 * Math.cos(centerLat * Math.PI / 180);
+    const widthMeters = Math.max(1e-6, Math.abs(b.maxx - b.minx)) * metersPerDegreeLon;
+    return widthMeters / mapEl.width;
+  }
+  return null;
+}
+
+// 选取“1/2/5×10^n”中不超过 total 的最大值
+function pickNiceDistance(totalMeters: number): number {
+  if (totalMeters <= 0 || !Number.isFinite(totalMeters)) return 0;
+  const exponent = Math.floor(Math.log10(totalMeters));
+  const base = Math.pow(10, exponent);
+  const candidates = [1, 2, 5].map(m => m * base).filter(c => c <= totalMeters);
+  if (candidates.length) return candidates[candidates.length - 1];
+  const fallback = [0.5 * base, 0.2 * base].filter(c => c <= totalMeters);
+  return fallback.length ? fallback[0] : totalMeters;
+}
+
+function formatDistance(meters: number): string {
+  if (!Number.isFinite(meters)) return '';
+  if (meters >= 1000) {
+    const km = meters / 1000;
+    const val = km >= 10 ? Math.round(km) : Math.round(km * 10) / 10;
+    return `${val} km`;
+  }
+  return `${Math.round(meters)} m`;
+}
+
+function getScaleBarInnerWidthPx(element: LayoutElement): number {
+  const mpp = metersPerPixelForLayout();
+  if (!mpp) return element.width;
+  const totalMeters = mpp * element.width;
+  const niceTotal = pickNiceDistance(totalMeters);
+  const px = niceTotal / mpp;
+  return Math.min(px, element.width);
+}
+
+function getScaleBarLabels(element: LayoutElement): { mid: string; end: string } {
+  const mpp = metersPerPixelForLayout();
+  if (!mpp) return { mid: '', end: '' };
+  const totalMeters = mpp * element.width;
+  const niceTotal = pickNiceDistance(totalMeters);
+  return {
+    mid: formatDistance(niceTotal / 2),
+    end: formatDistance(niceTotal)
+  };
+}
+
+// MapFrame 组件引用集合（按元素 id 存放）
+const mapFrameRefs = new Map<string, any>();
+function setMapFrameRef(id: string, el: any) {
+  if (el) {
+    mapFrameRefs.set(id, el);
+  } else {
+    mapFrameRefs.delete(id);
+  }
+}
+
+// 导出前：将所有 MapFrame 转换为快照覆盖，避免 html2canvas 无法捕获 WebGL
+async function prepareMapSnapshots() {
+  const tasks: Promise<any>[] = [];
+  mapFrameRefs.forEach((cmp) => {
+    if (cmp && typeof cmp.snapshot === 'function') {
+      tasks.push(cmp.snapshot());
+    }
+  });
+  if (tasks.length) {
+    await Promise.allSettled(tasks);
+  }
+}
+
+// 导出后：恢复 MapFrame 的实时渲染
+function restoreMapSnapshots() {
+  mapFrameRefs.forEach((cmp) => {
+    if (cmp && typeof cmp.restore === 'function') {
+      cmp.restore();
+    }
+  });
+}
+
+// 如果有 bbox，在挂载后注入元素，避免临时性 TDZ 错误
+onMounted(() => {
+  if (hasBBox) {
+    const b = bboxRef.value!;
+    const mapEl: LayoutElement = {
+      id: 'map_auto_' + Date.now(),
+      type: 'map',
+      name: '地图框',
+      x: 60,
+      y: 80,
+      width: pageSettings.width - 120,
+      height: pageSettings.height - 220
+    };
+    layoutElements.value.push(mapEl);
+    layoutElements.value.push({
+      id: 'text_bbox_' + Date.now(),
+      type: 'text',
+      name: '范围说明',
+      x: 60,
+      y: pageSettings.height - 120,
+      width: pageSettings.width - 120,
+      height: 40,
+      content: `范围: ${b.minx.toFixed(5)}, ${b.miny.toFixed(5)}  —  ${b.maxx.toFixed(5)}, ${b.maxy.toFixed(5)}`,
+      fontSize: 12,
+      color: '#111111'
+    });
+  }
+});
+
+// 当路由参数变化时，更新 bbox 文本、比例，并强制静态图刷新
+watch(() => route.fullPath, () => {
+  readBBoxFromRoute();
+  readScaleFromRouteOrSession();
+  const b = bboxRef.value;
+  const text = layoutElements.value.find(el => el.type === 'text' && el.name === '范围说明');
+  if (b && text) {
+    text.content = `范围: ${b.minx.toFixed(5)}, ${b.miny.toFixed(5)}  —  ${b.maxx.toFixed(5)}, ${b.maxy.toFixed(5)}`;
+  }
+});
+
 // 模板相关
 const selectedTemplate = ref('');
 
 // 拖拽相关
 const isDragging = ref(false);
 const isResizing = ref(false);
-const dragStartPos = ref({ x: 0, y: 0, elementX: 0, elementY: 0 });
+const dragStartPos = ref({ x: 0, y: 0, elementX: 0, elementY: 0, elementW: 0, elementH: 0 });
 const resizeDirection = ref('');
+
+// 调整步进与最小尺寸（更顺滑、直觉）
+const RESIZE_STEP = 1; // 1px 精细步进
+const RESIZE_SENS = 0.1; // 缩放灵敏度（越小越慢）
+const MIN_WIDTH = 120;
+const MIN_HEIGHT = 80;
+
+function toStepped(value: number) {
+  return Math.round(value / RESIZE_STEP) * RESIZE_STEP;
+}
 
 // 画布样式
 const canvasStyle = computed(() => {
@@ -552,7 +793,9 @@ const startDrag = (event: MouseEvent, element: LayoutElement) => {
     x: event.clientX,
     y: event.clientY,
     elementX: element.x,
-    elementY: element.y
+    elementY: element.y,
+    elementW: element.width,
+    elementH: element.height
   };
   selectElement(element);
 };
@@ -565,7 +808,9 @@ const startResize = (event: MouseEvent, element: LayoutElement, direction: strin
     x: event.clientX,
     y: event.clientY,
     elementX: element.x,
-    elementY: element.y
+    elementY: element.y,
+    elementW: element.width,
+    elementH: element.height
   };
   selectElement(element);
 };
@@ -581,24 +826,60 @@ const handleMouseMove = (event: MouseEvent) => {
     selectedElement.value.x = dragStartPos.value.elementX + deltaX;
     selectedElement.value.y = dragStartPos.value.elementY + deltaY;
   } else if (isResizing.value) {
-    const direction = resizeDirection.value;
-    
-    if (direction.includes('e')) {
-      selectedElement.value.width = Math.max(20, selectedElement.value.width + deltaX);
+    const dir = resizeDirection.value;
+    const s = dragStartPos.value;
+    const el = selectedElement.value;
+    const effectiveDX = toStepped(deltaX * RESIZE_SENS);
+    const effectiveDY = toStepped(deltaY * RESIZE_SENS);
+
+    // 基于起始状态计算目标矩形，确保锚点为相对边/角
+    let newX = s.elementX;
+    let newY = s.elementY;
+    let newW = s.elementW;
+    let newH = s.elementH;
+
+    // 水平方向
+    if (dir.includes('e')) {
+      // 右边拉伸：宽度增大
+      newW = s.elementW + effectiveDX;
     }
-    if (direction.includes('w')) {
-      const newWidth = Math.max(20, selectedElement.value.width - deltaX);
-      selectedElement.value.x = dragStartPos.value.elementX + deltaX;
-      selectedElement.value.width = newWidth;
+    if (dir.includes('w')) {
+      // 左边拉伸：宽度减小，x 右移
+      newW = s.elementW - effectiveDX;
+      newX = s.elementX + effectiveDX;
     }
-    if (direction.includes('s')) {
-      selectedElement.value.height = Math.max(20, selectedElement.value.height + deltaY);
+    // 垂直方向
+    if (dir.includes('s')) {
+      // 下边拉伸：高度增大
+      newH = s.elementH + effectiveDY;
     }
-    if (direction.includes('n')) {
-      const newHeight = Math.max(20, selectedElement.value.height - deltaY);
-      selectedElement.value.y = dragStartPos.value.elementY + deltaY;
-      selectedElement.value.height = newHeight;
+    if (dir.includes('n')) {
+      // 上边拉伸：高度减小，y 下移
+      newH = s.elementH - effectiveDY;
+      newY = s.elementY + effectiveDY;
     }
+
+    // 约束最小宽高，并在左/上拉伸时修正位置避免漂移
+    if (newW < MIN_WIDTH) {
+      if (dir.includes('w')) {
+        // 可应用的最小偏移量
+        const applied = s.elementW - MIN_WIDTH;
+        newX = s.elementX + applied;
+      }
+      newW = MIN_WIDTH;
+    }
+    if (newH < MIN_HEIGHT) {
+      if (dir.includes('n')) {
+        const applied = s.elementH - MIN_HEIGHT;
+        newY = s.elementY + applied;
+      }
+      newH = MIN_HEIGHT;
+    }
+
+    el.x = newX;
+    el.y = newY;
+    el.width = newW;
+    el.height = newH;
   }
 };
 
@@ -614,6 +895,7 @@ const exportAsPNG = async () => {
   if (!canvasRef.value) return;
   
   try {
+    await prepareMapSnapshots();
     const canvas = await html2canvas(canvasRef.value, {
       backgroundColor: '#ffffff',
       scale: 2,
@@ -629,6 +911,8 @@ const exportAsPNG = async () => {
   } catch (error) {
     console.error('PNG导出失败:', error);
     message.error('PNG导出失败，请重试');
+  } finally {
+    restoreMapSnapshots();
   }
 };
 
@@ -637,6 +921,7 @@ const exportAsPDF = async () => {
   if (!canvasRef.value) return;
   
   try {
+    await prepareMapSnapshots();
     const canvas = await html2canvas(canvasRef.value, {
       backgroundColor: '#ffffff',
       scale: 2,
@@ -644,19 +929,19 @@ const exportAsPDF = async () => {
     });
     
     const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({
-      orientation: pageSettings.orientation,
-      unit: 'px',
-      format: [pageSettings.width, pageSettings.height]
-    });
+    const pdfW = pageSettings.orientation === 'portrait' ? pageSettings.width : pageSettings.height;
+    const pdfH = pageSettings.orientation === 'portrait' ? pageSettings.height : pageSettings.width;
+    const pdf = new jsPDF({ orientation: pageSettings.orientation, unit: 'px', format: [pdfW, pdfH] });
     
-    pdf.addImage(imgData, 'PNG', 0, 0, pageSettings.width, pageSettings.height);
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
     pdf.save(`layout_${Date.now()}.pdf`);
     
     message.success('PDF导出成功！');
   } catch (error) {
     console.error('PDF导出失败:', error);
     message.error('PDF导出失败，请重试');
+  } finally {
+    restoreMapSnapshots();
   }
 };
 

@@ -3,7 +3,6 @@ import type { AxiosResponse } from 'axios';
 import { $t } from '@/locales';
 import { useAuthStore } from '@/store/modules/auth';
 import { getServiceBaseURL } from '@/utils/service';
-import { localStg } from '@/utils/storage';
 import { getAuthorization, handleExpiredRequest, showErrorMsg } from './shared';
 import type { RequestInstanceState } from './type';
 
@@ -11,7 +10,8 @@ const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === '
 // const { baseURL, otherBaseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
 // console.log(baseURL, otherBaseURL);
 
-const { baseURL } = getServiceBaseURL(import.meta.env, false);
+const { baseURL: envBaseURL } = getServiceBaseURL(import.meta.env, false);
+const baseURL = envBaseURL || 'http://localhost:8765/api/v0';
 const { otherBaseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
 
 // 调试信息

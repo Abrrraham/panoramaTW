@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { $t } from '@/locales';
-import { fetchCustomBackendError } from '@/service/api';
+// 本页面演示用：移除缺失的后端 API，引入本地 stub，避免类型错误
+async function fetchCustomBackendError(_code: string, msg: string) {
+  window.$message?.error(msg);
+  return { error: false };
+}
 
 async function logout() {
   await fetchCustomBackendError('8888', $t('request.logoutMsg'));

@@ -66,8 +66,8 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     try {
       const res = await fetchLogin({ userName, password });
       loginToken = { token: res.token, refreshToken: res.refreshToken || '' } as any;
-      // 同步缓存用户名，兼容旧逻辑
-      localStg.set('login_user_name', userName);
+      // 同步缓存用户名（使用原生 localStorage，避免 Local 键名类型约束）
+      try { window.localStorage.setItem('login_user_name', userName); } catch {}
       // 立即设置一次用户信息，确保头部立刻展示用户名与管理员标识
       const preInfo = await fetchGetUserInfo(userName);
       Object.assign(userInfo, preInfo as any);
@@ -103,21 +103,11 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     return false;
   }
 
-  function extractUserNameFromToken(): string {
-    const t = localStg.get('token') as string | null;
-    if (!t) return '';
-    try {
-      const raw = atob(t);
-      const idx = raw.indexOf(':');
-      return idx > 0 ? raw.slice(0, idx) : raw;
-    } catch {
-      return '';
-    }
-  }
+  // 移除未使用的 extractUserNameFromToken，避免 TS6133
 
   async function getUserInfo() {
     try {
-      const nameInStg = localStg.get('login_user_name') || '';
+      const nameInStg = window.localStorage.getItem('login_user_name') || '';
       const info = await fetchGetUserInfo(nameInStg);
       Object.assign(userInfo, info as any);
       return true;

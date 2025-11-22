@@ -8,9 +8,14 @@ import { AppstoreFilled, DatabaseFilled, DeleteOutlined, TableOutlined, ZoomInOu
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
 import type { Feature, GeoJsonProperties, Geometry } from 'geojson';
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
-import { MapboxSearchBox } from '@mapbox/search-js-web';
+import { setupSearchControl } from '@/utils/mapUtils/searchControl';
+import { addScaleControl, bindScaleAutoFade } from '@/utils/mapUtils/scaleControl';
+import { ensureMapContainerSize } from '@/utils/mapUtils/layout';
+import { bindTileErrorOnceTip } from '@/utils/mapUtils/errorHandler';
 import MapScene from '@/utils/mapUtils/mapModels/MapScene';
-import { fetchGetLayerTree } from '@/service/api';
+import { initData, extractNodes, convertToTreeData } from '@/utils/mapUtils/layerData';
+import { addBoxZoomControls, createHorizontalControlBar, selectBBox } from '@/utils/mapUtils/controls';
+import { zoomToLayer } from '@/utils/mapUtils/zoomToLayer';
 import AttributeTableWindow from '@/components/common/AttributeTableWindow.vue';
 import { explodeFeatureToPartFeatures } from '@/utils/mapUtils/featureUtils';
 import ChatBox from './modules/chat-box.vue';
@@ -28,11 +33,7 @@ const draw: MapboxDraw = new MapboxDraw({
 
 let scene: MapScene | null = null;
 
-// 最近一次搜索结果的标记（显示坐标）
-// 由自定义覆盖取代内置 Marker
-// let searchResultMarker: mapboxgl.Marker | null = null;
-let searchOverlayEl: HTMLElement | null = null;
-let searchOverlayCenter: mapboxgl.LngLatLike | null = null;
+// 搜索覆盖层已移至 utils/mapUtils/searchControl.ts
 
 // const mapContainer = ref<HTMLElement | null>(null);
 const mapViewEl = ref<HTMLElement | null>(null);
@@ -61,8 +62,7 @@ const layerContextMenuVisible = ref(false);
 const layerContextMenuPosition = ref({ x: 0, y: 0 });
 const currentContextLayer = ref<{ key: string; title: string } | null>(null);
 
-// 已提示过错误的 sourceId 集合，避免重复打扰
-const warnedSourceIds = new Set<string>();
+// 错误提示去重逻辑已迁移到 errorHandler 模块
 
 // 属性表相关
 const attributeTableVisible = ref(false);
@@ -437,65 +437,7 @@ const onLayerCheckClick = (_: any, e: AntTreeNodeCheckedEvent) => {
   }
 };
 
-const replaceProperties = (node: Map.BaseTreeNode): Map.LayerData => {
-  const { layerName, tableName, ...rest } = node;
-  return {
-    ...rest,
-    name: tableName,
-    name_cn: layerName,
-    children: node.children.map(child => replaceProperties(child))
-  };
-};
-
-const initData = async () => {
-  try {
-    const data = await fetchGetLayerTree();
-    console.log('获取到的图层树数据:', data);
-    return replaceProperties(data);
-  } catch (error) {
-    console.error('获取图层树数据失败:', error);
-    // 返回空的数据结构
-    return {
-      id: 'root',
-      name: 'root',
-      name_cn: '根节点',
-      category: 'static',
-      usage: null,
-      children: []
-    };
-  }
-};
-
-// 提取树中每个可作为图层的节点（包含叶子与带子节点但有 usage 的节点）
-const extractNodes = (tree: Map.LayerData[]): Map.LayerData[] => {
-  const result: Map.LayerData[] = [];
-
-  function traverse(node: Map.LayerData) {
-    // 任何存在 usage 的节点都视为可加载图层（包括 static 类型）
-    if (node.usage !== null) {
-      result.push({ ...node });
-    }
-
-    // 继续遍历子节点
-    if (node.children && node.children.length > 0) {
-      node.children.forEach((child: Map.LayerData) => traverse(child));
-    }
-  }
-
-  tree.forEach(root => traverse(root));
-
-  return result;
-};
-
-const convertToTreeData = (layers: Map.LayerData[]): TreeProps['treeData'] => {
-  return layers.map(layer => ({
-    key: layer.id,
-    title: layer.name_cn,
-    children: layer.children ? convertToTreeData(layer.children) : undefined,
-    isLayer: layer.usage !== null,
-    category: layer.category
-  }));
-};
+ 
 
 /// /////////// 地图绘制 ///////////////
 const startDraw = () => {
@@ -615,7 +557,7 @@ const onLayerContextMenuClick = async (menuKey: string, layerKey: string, layerT
       break;
     case 'zoomToLayer':
       // 缩放到图层
-      await zoomToLayer(layerKey, layerTitle);
+      await zoomToLayer(scene, map, layerKey, layerTitle);
       break;
     default:
       break;
@@ -746,673 +688,11 @@ const cancelAddFeatureToLayer = () => {
   featureName.value = '';
 };
 
-// 添加框选控件
-const addBoxZoomControls = () => {
-  // 创建框选放大按钮
-  const boxZoomInBtn = document.createElement('button');
-  boxZoomInBtn.className = 'mapboxgl-ctrl-icon box-zoom-in-btn';
-  boxZoomInBtn.title = '框选放大';
-  boxZoomInBtn.textContent = '⊞';  // 使用 textContent 而不是 innerHTML
-  boxZoomInBtn.style.cssText = `
-    background: white !important;
-    border: none !important;
-    width: 29px !important;
-    height: 29px !important;
-    cursor: pointer !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    font-size: 16px !important;
-    font-weight: bold !important;
-    color: #374151 !important;
-    box-sizing: border-box !important;
-  `;
+// 移至 utils/mapUtils/controls.ts -> addBoxZoomControls(map)
 
-  // 创建框选缩小按钮
-  const boxZoomOutBtn = document.createElement('button');
-  boxZoomOutBtn.className = 'mapboxgl-ctrl-icon box-zoom-out-btn';
-  boxZoomOutBtn.title = '框选缩小';
-  boxZoomOutBtn.textContent = '⊟';  // 使用 textContent 而不是 innerHTML
-  boxZoomOutBtn.style.cssText = `
-    background: white !important;
-    border: none !important;
-    width: 29px !important;
-    height: 29px !important;
-    cursor: pointer !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    font-size: 16px !important;
-    font-weight: bold !important;
-    color: #374151 !important;
-    box-sizing: border-box !important;
-  `;
+// 移至 utils/mapUtils/controls.ts -> createHorizontalControlBar(map, draw)
 
-  // 框选状态变量
-  let isBoxZooming = false;
-  let boxZoomType: 'in' | 'out' | null = null;
-
-  // 框选功能实现
-  const startBoxZoom = (type: 'in' | 'out') => {
-    if (isBoxZooming) {
-      // 如果已经在框选模式，则退出
-      exitBoxZoom();
-      return;
-    }
-
-    isBoxZooming = true;
-    boxZoomType = type;
-    
-    // 更新按钮状态
-    if (type === 'in') {
-      boxZoomInBtn.style.setProperty('background-color', '#007cbf', 'important');
-      boxZoomInBtn.style.setProperty('color', 'white', 'important');
-      boxZoomOutBtn.style.setProperty('background-color', 'white', 'important');
-      boxZoomOutBtn.style.setProperty('color', '#374151', 'important');
-    } else {
-      boxZoomOutBtn.style.setProperty('background-color', '#007cbf', 'important');
-      boxZoomOutBtn.style.setProperty('color', 'white', 'important');
-      boxZoomInBtn.style.setProperty('background-color', 'white', 'important');
-      boxZoomInBtn.style.setProperty('color', '#374151', 'important');
-    }
-
-    // 禁用默认的框选缩放
-    map.boxZoom.disable();
-    
-    // 改变光标样式
-    map.getCanvasContainer().style.cursor = 'crosshair';
-
-    // 添加框选事件监听器
-    const canvas = map.getCanvasContainer();
-    let startPoint: [number, number] | null = null;
-    let box: HTMLElement | null = null;
-
-    const onMouseDown = (e: MouseEvent) => {
-      if (!isBoxZooming) return;
-      
-      // 阻止地图拖拽
-      e.preventDefault();
-      e.stopPropagation();
-      map.dragPan.disable();
-      
-      startPoint = [e.clientX, e.clientY];
-      
-      // 创建选择框
-      box = document.createElement('div');
-      box.style.cssText = `
-        position: absolute;
-        border: 2px dashed #007cbf;
-        background-color: rgba(0, 124, 191, 0.1);
-        pointer-events: none;
-        z-index: 9999;
-      `;
-      canvas.appendChild(box);
-
-      const onMouseMove = (e: MouseEvent) => {
-        if (!startPoint || !box) return;
-        
-        const currentPoint = [e.clientX, e.clientY];
-        const rect = canvas.getBoundingClientRect();
-        
-        const minX = Math.min(startPoint[0], currentPoint[0]) - rect.left;
-        const minY = Math.min(startPoint[1], currentPoint[1]) - rect.top;
-        const maxX = Math.max(startPoint[0], currentPoint[0]) - rect.left;
-        const maxY = Math.max(startPoint[1], currentPoint[1]) - rect.top;
-        
-        box.style.left = minX + 'px';
-        box.style.top = minY + 'px';
-        box.style.width = (maxX - minX) + 'px';
-        box.style.height = (maxY - minY) + 'px';
-      };
-
-      const onMouseUp = (e: MouseEvent) => {
-        if (!startPoint || !box) return;
-        
-        const endPoint = [e.clientX, e.clientY];
-        const rect = canvas.getBoundingClientRect();
-        
-        // 计算地理边界
-        const sw = map.unproject([
-          Math.min(startPoint[0], endPoint[0]) - rect.left,
-          Math.max(startPoint[1], endPoint[1]) - rect.top
-        ]);
-        const ne = map.unproject([
-          Math.max(startPoint[0], endPoint[0]) - rect.left,
-          Math.min(startPoint[1], endPoint[1]) - rect.top
-        ]);
-
-        const bounds = new mapboxgl.LngLatBounds(sw, ne);
-
-        if (boxZoomType === 'in') {
-          // 框选放大
-          map.fitBounds(bounds, { padding: 20 });
-        } else if (boxZoomType === 'out') {
-          // 框选缩小
-          const currentBounds = map.getBounds();
-          const currentZoom = map.getZoom();
-          
-          if (currentBounds) {
-            const selectedArea = (ne.lng - sw.lng) * (ne.lat - sw.lat);
-            const currentArea = (currentBounds.getEast() - currentBounds.getWest()) * 
-                               (currentBounds.getNorth() - currentBounds.getSouth());
-            
-            if (selectedArea > 0 && currentArea > 0) {
-              const zoomDelta = Math.log2(selectedArea / currentArea);
-              const newZoom = Math.max(0, currentZoom + zoomDelta - 1);
-              
-              map.easeTo({
-                zoom: newZoom,
-                center: bounds.getCenter()
-              });
-            }
-          }
-        }
-
-        // 清理
-        canvas.removeChild(box);
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-        
-        // 重新启用地图拖拽
-        map.dragPan.enable();
-        
-        exitBoxZoom();
-      };
-
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-      e.preventDefault();
-    };
-
-    canvas.addEventListener('mousedown', onMouseDown);
-  };
-
-  const exitBoxZoom = () => {
-    isBoxZooming = false;
-    boxZoomType = null;
-    
-    // 恢复按钮状态
-    boxZoomInBtn.style.setProperty('background-color', 'white', 'important');
-    boxZoomInBtn.style.setProperty('color', '#374151', 'important');
-    boxZoomOutBtn.style.setProperty('background-color', 'white', 'important');
-    boxZoomOutBtn.style.setProperty('color', '#374151', 'important');
-    
-    // 恢复光标
-    map.getCanvasContainer().style.cursor = '';
-    
-    // 重新启用地图拖拽和默认框选
-    map.dragPan.enable();
-    map.boxZoom.enable();
-  };
-
-  // 绑定点击事件
-  boxZoomInBtn.addEventListener('click', () => startBoxZoom('in'));
-  boxZoomOutBtn.addEventListener('click', () => startBoxZoom('out'));
-
-  // 将按钮添加到全局变量，供后续使用
-  (window as any).boxZoomControls = { boxZoomInBtn, boxZoomOutBtn };
-};
-
-// 创建水平控制栏
-const createHorizontalControlBar = () => {
-  // 创建控制栏容器
-  const controlBar = document.createElement('div');
-  controlBar.className = 'horizontal-control-bar';
-  controlBar.style.cssText = `
-    position: absolute;
-    top: 10px;
-    left: calc(50% - 200px);
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(10px);
-    border-radius: 8px;
-    padding: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    z-index: 1500;
-  `;
-
-  // 获取现有控件
-  const drawControl = document.querySelector('.mapboxgl-ctrl-top-left .mapboxgl-ctrl-group');
-  const boxZoomControls = (window as any).boxZoomControls;
-
-  // 创建导航控件组
-  const navGroup = document.createElement('div');
-  navGroup.className = 'mapboxgl-ctrl-group';
-  navGroup.style.cssText = `
-    display: flex;
-    border-radius: 6px;
-    overflow: hidden;
-    margin: 0;
-  `;
-
-  // 创建放大按钮
-  const zoomInBtn = document.createElement('button');
-  zoomInBtn.className = 'mapboxgl-ctrl-icon mapboxgl-ctrl-zoom-in';
-  zoomInBtn.title = '放大';
-  zoomInBtn.innerHTML = '+';
-  zoomInBtn.style.cssText = `
-    background: white;
-    border: none;
-    width: 29px;
-    height: 29px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    font-weight: bold;
-    color: #374151;
-  `;
-  zoomInBtn.addEventListener('click', () => map.zoomIn());
-
-  // 创建缩小按钮
-  const zoomOutBtn = document.createElement('button');
-  zoomOutBtn.className = 'mapboxgl-ctrl-icon mapboxgl-ctrl-zoom-out';
-  zoomOutBtn.title = '缩小';
-  zoomOutBtn.innerHTML = '−';
-  zoomOutBtn.style.cssText = `
-    background: white;
-    border: none;
-    width: 29px;
-    height: 29px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    font-weight: bold;
-    color: #374151;
-  `;
-  zoomOutBtn.addEventListener('click', () => map.zoomOut());
-
-  navGroup.appendChild(zoomInBtn);
-  navGroup.appendChild(zoomOutBtn);
-  controlBar.appendChild(navGroup);
-
-  // 添加分隔线
-  const divider1 = document.createElement('div');
-  divider1.style.cssText = `
-    width: 1px;
-    height: 24px;
-    background: rgba(0, 0, 0, 0.1);
-    margin: 0 4px;
-  `;
-  controlBar.appendChild(divider1);
-
-  // 添加框选控件
-  if (boxZoomControls) {
-    const boxZoomGroup = document.createElement('div');
-    boxZoomGroup.className = 'mapboxgl-ctrl-group';
-    boxZoomGroup.style.cssText = `
-      display: flex;
-      border-radius: 6px;
-      overflow: hidden;
-      margin: 0;
-    `;
-    boxZoomGroup.appendChild(boxZoomControls.boxZoomInBtn);
-    boxZoomGroup.appendChild(boxZoomControls.boxZoomOutBtn);
-    controlBar.appendChild(boxZoomGroup);
-
-    // 添加分隔线
-    const divider2 = document.createElement('div');
-    divider2.style.cssText = `
-      width: 1px;
-      height: 24px;
-      background: rgba(0, 0, 0, 0.1);
-      margin: 0 4px;
-    `;
-    controlBar.appendChild(divider2);
-  }
-
-  if (drawControl) {
-    // 直接克隆原生的绘制控件，保持原生样式和功能
-    const drawClone = drawControl.cloneNode(true) as HTMLElement;
-    drawClone.style.cssText = `
-      display: flex;
-      border-radius: 6px;
-      overflow: hidden;
-      margin: 0;
-    `;
-    
-    // 获取按钮元素
-    const buttons = drawClone.querySelectorAll('button');
-    const originalButtons = drawControl.querySelectorAll('button');
-    
-    // 存储当前选中的绘制模式和按钮
-    let currentDrawMode: string | null = null;
-    let currentDrawButton: HTMLElement | null = null;
-
-    // 只为绘制按钮（点、线、面）添加选中状态管理
-    
-    // 调试：打印所有按钮的类名
-    console.log('绘制控件按钮类名:');
-    buttons.forEach((btn, index) => {
-      console.log(`按钮 ${index}:`, btn.className);
-    });
-    
-    buttons.forEach((button, index) => {
-      const originalButton = originalButtons[index];
-      if (originalButton) {
-        // 为按钮添加点击事件委托
-        button.addEventListener('click', () => {
-          // 触发原始按钮的点击事件
-          originalButton.click();
-          
-          // 检查是否是绘制按钮（需要状态管理的按钮）
-          // 使用更灵活的方法来识别按钮类型
-          let buttonMode = '';
-          let isDrawingButton = false;
-          
-          // 检查各种可能的类名组合
-          if (button.classList.contains('mapbox-gl-draw_point')) {
-            buttonMode = 'draw_point';
-            isDrawingButton = true;
-          } else if (button.classList.contains('mapbox-gl-draw_line_string') || 
-                     button.classList.contains('mapbox-gl-draw_line') ||
-                     button.title?.includes('线') || 
-                     button.title?.includes('line')) {
-            buttonMode = 'draw_line_string';
-            isDrawingButton = true;
-          } else if (button.classList.contains('mapbox-gl-draw_polygon')) {
-            buttonMode = 'draw_polygon';
-            isDrawingButton = true;
-          }
-          
-          if (isDrawingButton) {
-
-            // 检查是否点击了当前已选中的按钮（切换功能）
-            if (currentDrawButton === button && currentDrawMode === buttonMode) {
-              // 取消选中状态，退出绘制模式
-              currentDrawMode = null;
-              currentDrawButton = null;
-              button.classList.remove('active');
-              draw.changeMode('simple_select');
-            } else {
-              // 选中新的绘制工具
-              currentDrawMode = buttonMode;
-              currentDrawButton = button as HTMLElement;
-              
-              // 重置所有绘制按钮的选中状态
-              buttons.forEach(btn => {
-                if (btn.classList.contains('mapbox-gl-draw_point') ||
-                    btn.classList.contains('mapbox-gl-draw_line_string') ||
-                    btn.classList.contains('mapbox-gl-draw_line') ||
-                    btn.classList.contains('mapbox-gl-draw_polygon') ||
-                    btn.title?.includes('线') || 
-                    btn.title?.includes('点') || 
-                    btn.title?.includes('面')) {
-                  btn.classList.remove('active');
-                }
-              });
-              
-              // 设置当前按钮为选中状态
-              button.classList.add('active');
-            }
-          } else {
-            // 非绘制按钮（如删除、合并、拆分等）点击后清除选中状态
-            if (button.classList.contains('mapbox-gl-draw_trash')) {
-              currentDrawMode = null;
-              currentDrawButton = null;
-              buttons.forEach(btn => {
-                if (btn.classList.contains('mapbox-gl-draw_point') ||
-                    btn.classList.contains('mapbox-gl-draw_line_string') ||
-                    btn.classList.contains('mapbox-gl-draw_line') ||
-                    btn.classList.contains('mapbox-gl-draw_polygon') ||
-                    btn.title?.includes('线') || 
-                    btn.title?.includes('点') || 
-                    btn.title?.includes('面')) {
-                  btn.classList.remove('active');
-                }
-              });
-            }
-          }
-        });
-      }
-    });
-
-    // 监听绘制完成事件，保持绘制状态
-    map.on('draw.create', () => {
-      // 绘制完成后，如果有选中的模式，继续保持该模式
-      if (currentDrawMode && currentDrawButton) {
-        setTimeout(() => {
-          if (currentDrawMode) {
-            // 确保按钮保持选中状态
-            currentDrawButton?.classList.add('active');
-            // 继续相同的绘制模式
-            draw.changeMode(currentDrawMode as any);
-          }
-        }, 50);
-      }
-    });
-
-    // 监听线绘制完成事件（线绘制有特殊的完成逻辑）
-    map.on('draw.update', () => {
-      // 线绘制更新时也保持状态
-      if (currentDrawMode === 'draw_line_string' && currentDrawButton) {
-        setTimeout(() => {
-          currentDrawButton?.classList.add('active');
-        }, 10);
-      }
-    });
-
-    // 监听绘制模式变化，但不自动清除选中状态
-    map.on('draw.modechange', (e: any) => {
-      // 只在手动切换到 simple_select 模式时才清除状态
-      if (e.mode === 'simple_select' && !currentDrawMode) {
-        buttons.forEach(btn => {
-          if (btn.classList.contains('mapbox-gl-draw_point') ||
-              btn.classList.contains('mapbox-gl-draw_line_string') ||
-              btn.classList.contains('mapbox-gl-draw_line') ||
-              btn.classList.contains('mapbox-gl-draw_polygon') ||
-              btn.title?.includes('线') || 
-              btn.title?.includes('点') || 
-              btn.title?.includes('面')) {
-            btn.classList.remove('active');
-          }
-        });
-      }
-      
-      // 如果有当前选中的模式，确保对应按钮保持选中状态
-      if (currentDrawMode && currentDrawButton) {
-        // 先清除所有状态
-        buttons.forEach(btn => {
-          if (btn.classList.contains('mapbox-gl-draw_point') ||
-              btn.classList.contains('mapbox-gl-draw_line_string') ||
-              btn.classList.contains('mapbox-gl-draw_line') ||
-              btn.classList.contains('mapbox-gl-draw_polygon') ||
-              btn.title?.includes('线') || 
-              btn.title?.includes('点') || 
-              btn.title?.includes('面')) {
-            btn.classList.remove('active');
-          }
-        });
-        
-        // 保持当前选中按钮的状态
-        currentDrawButton.classList.add('active');
-      }
-    });
-    
-    // 添加定时检查，确保选中状态不会丢失
-    const stateChecker = setInterval(() => {
-      if (currentDrawMode && currentDrawButton) {
-        // 如果有选中的模式但按钮没有active类，重新添加
-        if (!currentDrawButton.classList.contains('active')) {
-          currentDrawButton.classList.add('active');
-        }
-      }
-    }, 100);
-
-    // 在控件移除时清理定时器
-    const originalRemove = drawClone.remove;
-    drawClone.remove = function() {
-      clearInterval(stateChecker);
-      return originalRemove.call(this);
-    };
-
-    controlBar.appendChild(drawClone);
-  }
-
-  // 将控制栏添加到地图容器
-  const mapContainer = document.getElementById('map-container');
-  if (mapContainer) {
-    mapContainer.appendChild(controlBar);
-  }
-
-  
-  const originalDrawControl = document.querySelector('.mapboxgl-ctrl-top-left') as HTMLElement;
-  
-  if (originalDrawControl) originalDrawControl.style.display = 'none';
-
-  // 官方罗盘（仅罗盘，不含缩放）
-  const barCompass = new mapboxgl.NavigationControl({
-    visualizePitch: true,
-    showCompass: true,
-    showZoom: false
-  });
-  const compassEl = barCompass.onAdd(map);
-  compassEl.style.marginLeft = '6px'; // 与现有按钮留出间距
-  controlBar.appendChild(compassEl);
-};
-
-// 缩放到图层功能
-async function zoomToLayer(layerKey: string, layerTitle: string) {
-  try {
-    const node = scene?.findNodeById(layerKey);
-    if (!node) {
-      window.$message?.warning('未找到该图层');
-      return;
-    }
-
-    // 如果图层有预设的视图范围，直接使用
-    if (node.viewState) {
-      map.easeTo(node.viewState);
-      return;
-    }
-
-    // 如果图层未激活，先激活它
-    if (!node.active) {
-      const loadSuccess = scene?.loadNode(layerKey);
-      if (!loadSuccess) {
-        window.$message?.warning('无法加载该图层');
-        return;
-      }
-      // 等待图层加载完成
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-
-    // 尝试查询图层要素来计算边界
-    const features = scene?.queryLayerFeatures(layerKey);
-    if (features && features.length > 0) {
-      const bounds = new mapboxgl.LngLatBounds();
-      let hasValidGeometry = false;
-
-      features.forEach(feature => {
-        if (feature.geometry) {
-          try {
-            switch (feature.geometry.type) {
-              case 'Point':
-                bounds.extend(feature.geometry.coordinates as [number, number]);
-                hasValidGeometry = true;
-                break;
-              case 'LineString':
-                feature.geometry.coordinates.forEach((coord: [number, number]) => {
-                  bounds.extend(coord);
-                });
-                hasValidGeometry = true;
-                break;
-              case 'Polygon':
-                feature.geometry.coordinates[0].forEach((coord: [number, number]) => {
-                  bounds.extend(coord);
-                });
-                hasValidGeometry = true;
-                break;
-              case 'MultiPoint':
-                feature.geometry.coordinates.forEach((coord: [number, number]) => {
-                  bounds.extend(coord);
-                });
-                hasValidGeometry = true;
-                break;
-              case 'MultiLineString':
-                feature.geometry.coordinates.forEach((line: [number, number][]) => {
-                  line.forEach((coord: [number, number]) => {
-                    bounds.extend(coord);
-                  });
-                });
-                hasValidGeometry = true;
-                break;
-              case 'MultiPolygon':
-                feature.geometry.coordinates.forEach((polygon: [number, number][][]) => {
-                  polygon[0].forEach((coord: [number, number]) => {
-                    bounds.extend(coord);
-                  });
-                });
-                hasValidGeometry = true;
-                break;
-              default:
-                console.warn('未支持的几何类型:', feature.geometry.type);
-                break;
-            }
-          } catch (error) {
-            console.warn('处理要素几何时出错:', error);
-          }
-        }
-      });
-
-      if (hasValidGeometry) {
-        // 检查边界是否有效
-        const sw = bounds.getSouthWest();
-        const ne = bounds.getNorthEast();
-        if (sw.lng !== ne.lng || sw.lat !== ne.lat) {
-          map.fitBounds(bounds, {
-            padding: 50,
-            maxZoom: 16
-          });
-          window.$message?.success(`已缩放到图层 ${layerTitle}`);
-          return;
-        }
-      }
-    }
-
-    // 如果没有要素数据，尝试使用渲染的图层边界
-    const renderedFeatures = map.queryRenderedFeatures({
-      layers: node.layers.map(layer => layer.id)
-    });
-
-    if (renderedFeatures && renderedFeatures.length > 0) {
-      const bounds = new mapboxgl.LngLatBounds();
-      let hasValidGeometry = false;
-
-      renderedFeatures.forEach(feature => {
-        if (feature.geometry && feature.geometry.type === 'Point') {
-          bounds.extend(feature.geometry.coordinates as [number, number]);
-          hasValidGeometry = true;
-        }
-      });
-
-      if (hasValidGeometry) {
-        map.fitBounds(bounds, {
-          padding: 50,
-          maxZoom: 16
-        });
-        window.$message?.success(`已缩放到图层 ${layerTitle}`);
-        return;
-      }
-    }
-
-    // 最后的回退方案：使用默认的缩放级别
-    window.$message?.info(`无法确定图层 ${layerTitle} 的范围，已设置为默认视图`);
-    map.easeTo({
-      center: [115.43530389617354, 7.325620166519911],
-      zoom: 8
-    });
-  } catch (error) {
-    console.error('缩放到图层时出错:', error);
-    window.$message?.error('缩放到图层失败');
-  }
-}
+// 移至 utils/mapUtils/zoomToLayer.ts -> zoomToLayer(scene, map, layerKey, layerTitle)
 
 onMounted(async () => {
   if (mapViewEl.value || document.getElementById('map-view')) {
@@ -1442,356 +722,24 @@ onMounted(async () => {
       language: 'zh-Hans'
     });
 
-    const scale = new mapboxgl.ScaleControl({
-      maxWidth: 100,
-      unit: 'metric'
-    });
+    // 比例尺控件
 
-    map.addControl(scale, 'bottom-right');
     // 不再添加原有的导航控件，使用水平控制栏中的控件
     map.addControl(draw, 'top-left');
 
-    // 若容器高度异常（< 200px），强制拉伸到视口高度，避免父级未设置高度导致画布为0
-    try {
-      const host = document.getElementById('map-container') as HTMLElement | null;
-      const view = document.getElementById('map-view') as HTMLElement | null;
-      if (view && view.clientHeight < 200) {
-        if (host) host.style.height = '100vh';
-        view.style.minHeight = '400px';
-      }
-      // 动态占满可视区域（扣除头部等已占高度）
-      const adjustContainerHeight = () => {
-        const h = document.getElementById('map-container') as HTMLElement | null;
-        const v = document.getElementById('map-view') as HTMLElement | null;
-        if (!h || !v) return;
-        const top = h.getBoundingClientRect().top;
-        const height = Math.max(300, window.innerHeight - top);
-        h.style.height = height + 'px';
-        v.style.height = height + 'px';
-        v.style.width = '100%';
-        map.resize();
-      };
-      adjustContainerHeight();
-      window.addEventListener('resize', adjustContainerHeight);
-      onUnmounted(() => window.removeEventListener('resize', adjustContainerHeight));
-    } catch {}
+    // 容器自适应
+    const disposeLayout = ensureMapContainerSize(map);
+    onUnmounted(() => { try { disposeLayout(); } catch {} });
 
-    // 防止父容器高度/可见性变化导致画布尺寸为0，自动适配
-    try {
-      const el = mapViewEl.value as HTMLElement || document.getElementById('map-view') as HTMLElement;
-      const ensureResize = () => {
-        if (el.clientWidth > 0 && el.clientHeight > 0) {
-          map.resize();
-          return true;
-        }
-        return false;
-      };
-      // 初次尝试
-      ensureResize();
-      // 观察尺寸变化
-      const ro = new ResizeObserver(() => map.resize());
-      ro.observe(el);
-      // 若初始为0，短暂轮询直至可用
-      const t = setInterval(() => {
-        if (ensureResize()) clearInterval(t);
-      }, 200);
-      onUnmounted(() => {
-        try { ro.disconnect(); } catch {}
-        clearInterval(t);
-      });
-    } catch {}
-
-    // 添加搜索框控件（右上角）
-    try {
-      const searchBox = new MapboxSearchBox();
-      // 访问令牌与选项
-      (searchBox as any).accessToken = mapboxgl.accessToken;
-      ;(searchBox as any).options = {
-        language: 'zh-Hans',
-        limit: 10,
-        proximity: map.getCenter()
-      };
-      // 明确的输入提示（覆盖组件默认“搜索”占位符）
-      (searchBox as any).placeholder = '输入地名/地址/POI,或经度,纬度';
-
-      // 绑定到地图并启用坐标输入（反向检索）
-      try {
-        (searchBox as any).mapboxgl = mapboxgl;
-        (searchBox as any).marker = { color: '#007cbf' };
-        (searchBox as any).bindMap?.(map);
-        (searchBox as any).componentOptions = {
-          // 启用坐标查询（反向检索），并统一为经度,纬度
-          allowReverse: true,
-          flipCoordinates: false,
-          flyTo: false
-        };
-      } catch (bindErr) {
-        console.warn('搜索控件绑定地图失败，但不影响基本搜索:', bindErr);
-      }
-
-      map.addControl(searchBox as any, 'top-right');
-
-      // 坐标直达：当输入为 “经度,纬度” 或 “经度 纬度” 时，直接跳转并标注，不调用远端搜索
-      const updateSearchOverlay = () => {
-        if (!searchOverlayEl || !searchOverlayCenter) return;
-        const p = map.project(searchOverlayCenter as any);
-        // 以容器左上角为参考，避免受外层滚动影响
-        searchOverlayEl.style.left = '0px';
-        searchOverlayEl.style.top = '0px';
-        searchOverlayEl.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
-      };
-
-      const removeSearchOverlay = () => {
-        if (searchOverlayEl) {
-          searchOverlayEl.remove();
-          searchOverlayEl = null;
-          searchOverlayCenter = null;
-          map.off('move', updateSearchOverlay);
-          map.off('zoom', updateSearchOverlay);
-          map.off('resize', updateSearchOverlay);
-        }
-      };
-
-      const ensureOverlay = (center: [number, number]) => {
-        searchOverlayCenter = new mapboxgl.LngLat(center[0], center[1]);
-        if (!searchOverlayEl) {
-          searchOverlayEl = document.createElement('div');
-          searchOverlayEl.style.position = 'absolute';
-          searchOverlayEl.style.zIndex = '1700'; // 设置为比搜索框更高的层级
-          // 不影响地图交互
-          searchOverlayEl.style.pointerEvents = 'none';
-          searchOverlayEl.innerHTML = `
-            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:auto;">
-              <div style="width:14px;height:14px;border-radius:50%;background:#007cbf;border:2px solid #fff;box-shadow:0 0 4px rgba(0,0,0,.3)"></div>
-              <div style="position:relative;background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:8px 28px 8px 10px;box-shadow:0 4px 12px rgba(0,0,0,.15);font-size:13px;line-height:1.4;white-space:nowrap;color:#111;min-width:140px;">
-                <button data-role="close" title="关闭" style="position:absolute;top:4px;right:4px;width:18px;height:18px;border:none;background:transparent;color:#666;cursor:pointer;font-size:16px;line-height:18px;padding:0;">×</button>
-                经度: <b data-role="lng"></b><br/>
-                纬度: <b data-role="lat"></b>
-              </div>
-            </div>`;
-          const host = document.getElementById('map-view');
-          host?.appendChild(searchOverlayEl);
-          map.on('move', updateSearchOverlay);
-          map.on('zoom', updateSearchOverlay);
-          map.on('resize', updateSearchOverlay);
-          // 绑定关闭按钮
-          const closeBtn = searchOverlayEl.querySelector('[data-role="close"]') as HTMLElement | null;
-          closeBtn?.addEventListener('click', (ev: MouseEvent) => {
-            ev.stopPropagation();
-            removeSearchOverlay();
-          });
-        }
-        const lngEl = searchOverlayEl!.querySelector('[data-role="lng"]') as HTMLElement;
-        const latEl = searchOverlayEl!.querySelector('[data-role="lat"]') as HTMLElement;
-        lngEl.textContent = center[0].toFixed(6);
-        latEl.textContent = center[1].toFixed(6);
-        updateSearchOverlay();
-      };
-
-      const handleCoordJump = (lon: number, lat: number) => {
-        if (Number.isFinite(lon) && Number.isFinite(lat) && Math.abs(lon) <= 180 && Math.abs(lat) <= 90) {
-          const center: [number, number] = [lon, lat];
-          map.flyTo({ center, zoom: 5 });
-          // 使用画布上的自定义覆盖，避免滚动容器影响
-          ensureOverlay(center);
-        }
-      };
-
-      // 按下 Enter 时，如果完整为“经度,纬度”则跳转并标注
-      const inputEl = (searchBox as any).input as HTMLInputElement | undefined;
-      inputEl?.addEventListener('keydown', (e: KeyboardEvent) => {
-        if (e.key !== 'Enter') return;
-        const val = inputEl.value || '';
-        const match = val.match(/^\s*(-?\d+(?:\.\d+)?)\s*[ ,\t]+\s*(-?\d+(?:\.\d+)?)\s*$/);
-        if (match) {
-          const lon = parseFloat(match[1]);
-          const lat = parseFloat(match[2]);
-          handleCoordJump(lon, lat);
-        }
-      });
-
-      // 选择结果后飞到位置
-      (searchBox as any).addEventListener('retrieve', (ev: any) => {
-        const detail = ev?.detail;
-        const feature = detail?.features?.[0] || detail?.feature || detail;
-        const bbox = feature?.properties?.bbox || feature?.bbox;
-        const coords = feature?.geometry?.coordinates || feature?.properties?.coordinates;
-        if (bbox && Array.isArray(bbox) && bbox.length === 4) {
-          const bounds = new mapboxgl.LngLatBounds([bbox[0], bbox[1]], [bbox[2], bbox[3]]);
-          map.fitBounds(bounds, { padding: 40, maxZoom: 16 });
-          const c = bounds.getCenter();
-          ensureOverlay([c.lng, c.lat]);
-        } else if (Array.isArray(coords) && coords.length >= 2) {
-          const center: [number, number] = [Number(coords[0]), Number(coords[1])];
-          map.flyTo({ center, zoom: 13 });
-          ensureOverlay(center);
-        }
-      });
-
-      // 调整右上角控件容器位置，避免与聊天框重叠
-      setTimeout(() => {
-        const topRight = document.querySelector('#map-view .mapboxgl-ctrl-top-right') as HTMLElement | null;
-        if (topRight) {
-          // 确保整个搜索控件容器的z-index足够高
-          topRight.style.zIndex = '1500';
-          topRight.style.position = 'absolute';
-          topRight.style.top = '10px'; // 与水平控制栏保持完全相同的top值
-          topRight.style.right = 'calc(20% + 50px)';
-          topRight.style.left = 'auto';
-          topRight.style.display = 'flex';
-          topRight.style.alignItems = 'center'; // 垂直居中对齐
-          topRight.style.height = 'auto'; // 自动高度
-        }
-        const searchEl = document.querySelector('#map-view .mapbox-search-box') as HTMLElement | null;
-        if (searchEl) {
-          searchEl.style.width = '300px';
-          searchEl.style.maxWidth = '300px';
-          searchEl.style.position = 'relative'; // 相对于父容器定位
-          searchEl.style.right = 'auto';
-          searchEl.style.top = 'auto';
-          searchEl.style.left = '0';
-          searchEl.style.zIndex = '1500'; // 大幅提升层级，确保在ChatBox (200) 之上
-          
-          // 动态设置搜索下拉列表的z-index
-          const setDropdownZIndex = () => {
-            // 更全面的选择器列表，包括可能的各种变体
-            const dropdownSelectors = [
-              // Mapbox搜索框相关
-              '.mapbox-search-listbox',
-              '.mapbox-search-suggestions', 
-              '.mapbox-search-results',
-              '.mapbox-search-box-results',
-              '[role="listbox"]',
-              '[data-testid="suggestions"]',
-              '[data-testid="results"]',
-              '.suggestions',
-              '.mapbox-search-listbox-container',
-              '.mapbox-search-results-list',
-              // 通用下拉选择器
-              '.dropdown',
-              '.dropdown-menu',
-              '.autocomplete',
-              '.autocomplete-suggestions',
-              '.search-suggestions',
-              '.search-results',
-              // 可能的Mapbox自定义类名
-              '[class*="mapbox"][class*="search"]',
-              '[class*="suggestion"]',
-              '[class*="result"]'
-            ];
-            
-            // 在搜索框内查找
-            dropdownSelectors.forEach(selector => {
-              try {
-                const elements = searchEl.querySelectorAll(selector);
-                elements.forEach((el: any) => {
-                  el.style.zIndex = '1600';
-                  el.style.position = 'relative';
-                });
-              } catch (e) {
-                // 忽略无效选择器错误
-              }
-            });
-            
-            // 在全局查找搜索相关的下拉列表
-            dropdownSelectors.forEach(selector => {
-              try {
-                const globalElements = document.querySelectorAll(selector);
-                globalElements.forEach((el: any) => {
-                  // 检查是否与我们的搜索框相关
-                  const rect = searchEl.getBoundingClientRect();
-                  const elRect = el.getBoundingClientRect();
-                  
-                  // 如果元素位置在搜索框附近，认为是搜索下拉列表
-                  if (Math.abs(elRect.left - rect.left) < 100 && 
-                      elRect.top >= rect.bottom - 50) {
-                    el.style.zIndex = '1600';
-                    el.style.position = 'absolute';
-                  }
-                });
-              } catch (e) {
-                // 忽略错误
-              }
-            });
-            
-            // 特别处理：直接在document body查找可能的下拉列表
-            const bodyDropdowns = document.querySelectorAll('div[style*="position"], div[class*="dropdown"], div[class*="suggestion"], div[class*="result"]');
-            bodyDropdowns.forEach((el: any) => {
-              try {
-                const rect = searchEl.getBoundingClientRect();
-                const elRect = el.getBoundingClientRect();
-                
-                // 检查位置关系：在搜索框下方且水平位置接近
-                if (elRect.top >= rect.bottom - 20 && 
-                    Math.abs(elRect.left - rect.left) < 150 &&
-                    elRect.width > 100) {
-                  el.style.zIndex = '1600';
-                  console.log('设置搜索下拉列表z-index:', el);
-                }
-              } catch (e) {
-                // 忽略错误
-              }
-            });
-          };
-          
-          // 立即设置一次
-          setDropdownZIndex();
-          
-          // 多重监听机制，确保下拉列表出现时也有正确的z-index
-          
-          // 1. 监听搜索框本身的变化
-          const searchObserver = new MutationObserver(setDropdownZIndex);
-          searchObserver.observe(searchEl, { 
-            childList: true, 
-            subtree: true, 
-            attributes: true,
-            attributeFilter: ['class', 'style']
-          });
-          
-          // 2. 监听整个document body的变化（捕获动态创建的下拉列表）
-          const bodyObserver = new MutationObserver(() => {
-            setTimeout(setDropdownZIndex, 10); // 小延迟确保DOM更新完成
-          });
-          bodyObserver.observe(document.body, {
-            childList: true,
-            subtree: true
-          });
-          
-          // 3. 监听搜索框的focus和input事件
-          const searchInput = searchEl.querySelector('input');
-          if (searchInput) {
-            searchInput.addEventListener('focus', () => {
-              setTimeout(setDropdownZIndex, 100);
-            });
-            searchInput.addEventListener('input', () => {
-              setTimeout(setDropdownZIndex, 200);
-            });
-          }
-          
-          // 4. 定期检查（作为最后保障）
-          const intervalCheck = setInterval(setDropdownZIndex, 1000);
-          
-          // 清理函数
-          const cleanup = () => {
-            searchObserver.disconnect();
-            bodyObserver.disconnect();
-            clearInterval(intervalCheck);
-          };
-          
-          // 在页面卸载时清理
-          window.addEventListener('beforeunload', cleanup);
-        }
-      }, 150);
-    } catch (e) {
-      console.error('添加搜索框失败:', e);
-    }
+    // 搜索控件
+    setupSearchControl(map);
 
     // 添加框选功能按钮
-    addBoxZoomControls();
+    addBoxZoomControls(map);
 
     setTimeout(() => {
       // 创建水平控制栏并重新排列控件
-      createHorizontalControlBar();
+      createHorizontalControlBar(map, draw);
       
       // 调试：检查所有控件是否存在
       console.log('检查控件存在情况:');
@@ -2028,49 +976,14 @@ onMounted(async () => {
       containerEl.addEventListener('contextmenu', onContextMenuCapture, true);
     }
 
-    // 比例尺自动隐藏
-    let scaleHideTimer: NodeJS.Timeout | null = null;
+    // 比例尺控件与自动淡出
+    addScaleControl(map);
+    const disposeScale = bindScaleAutoFade(map);
+    onUnmounted(() => { try { disposeScale(); } catch {} });
 
-    const showScale = () => {
-      const scaleControl = document.querySelector('.mapboxgl-ctrl-scale') as HTMLElement;
-      if (scaleControl) {
-        scaleControl.classList.remove('opacity-0');
-        scaleControl.classList.add('opacity-100');
-
-        // 清除之前的定时器
-        if (scaleHideTimer) {
-          clearTimeout(scaleHideTimer);
-        }
-
-        // 3秒后隐藏
-        scaleHideTimer = setTimeout(() => {
-          scaleControl.classList.remove('opacity-100');
-          scaleControl.classList.add('opacity-0');
-        }, 500);
-      }
-    };
-
-    // 监听地图缩放事件
-    map.on('zoom', showScale);
-    map.on('zoomstart', showScale);
-    map.on('zoomend', showScale);
-
-    // 初始显示比例尺
-    setTimeout(showScale, 500);
-
-    // 捕获资源加载错误（如瓦片404/500），给出一次性提示
-    map.on('error', (e: any) => {
-      const status = e?.error?.status;
-      const sourceId = e?.sourceId as string | undefined;
-      const isTileError =
-        e?.resourceType === 'tile' || /getMVT|getRasterTile/.test(String(e?.error?.url || e?.error?.message || ''));
-      if (isTileError && sourceId && (status === 404 || status === 500 || status === 0)) {
-        if (!warnedSourceIds.has(sourceId)) {
-          warnedSourceIds.add(sourceId);
-          window.$message?.warning('该图层数据未就绪或不可用');
-        }
-      }
-    });
+    // 资源加载错误提示（一次性）
+    const disposeError = bindTileErrorOnceTip(map);
+    onUnmounted(() => { try { disposeError(); } catch {} });
 
     // 测试API连接
     try {
@@ -2108,9 +1021,27 @@ onMounted(async () => {
   }
 });
 
-// 打开布局视图
-const openLayoutView = () => {
-  router.push('/layout');
+// 框选出图：一次性选择范围并跳转到布局页
+const openLayoutViewWithBBox = () => {
+  if (!map) return router.push('/layout');
+  window.$message?.info('请在地图上拖拽选择出图范围');
+  selectBBox(map, (bounds) => {
+    // 保存当前地图样式（含当前后端数据图层与可见性）到 sessionStorage
+    try {
+      const style = map.getStyle();
+      sessionStorage.setItem('layout_map_style', JSON.stringify(style));
+    } catch {}
+    const b = bounds as any;
+    const sw = (b.getSouthWest ? b.getSouthWest() : b.sw) as any;
+    const ne = (b.getNorthEast ? b.getNorthEast() : b.ne) as any;
+    const params = new URLSearchParams({
+      minx: String(sw.lng ?? sw[0]),
+      miny: String(sw.lat ?? sw[1]),
+      maxx: String(ne.lng ?? ne[0]),
+      maxy: String(ne.lat ?? ne[1])
+    });
+    router.push(`/layout?${params.toString()}`);
+  });
 };
 
 
@@ -2122,17 +1053,17 @@ const openLayoutView = () => {
     
     <!-- 布局视图按钮 -->
     <div class="absolute top-4 right-4 z-[100]">
-      <ATooltip title="打开布局视图" placement="left">
+      <ATooltip title="框选范围并打开布局视图" placement="left">
         <AButton 
           type="primary" 
           size="large"
           class="shadow-lg hover:shadow-xl transition-all duration-200"
-          @click="openLayoutView"
+          @click="openLayoutViewWithBBox"
         >
           <template #icon>
             <IconifyIcon icon="material-symbols:print-outline" class="text-lg" />
           </template>
-          布局出图
+          框选出图
         </AButton>
       </ATooltip>
     </div>
