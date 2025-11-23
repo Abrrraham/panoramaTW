@@ -9,7 +9,18 @@ import { transformElegantRoutesToVueRoutes } from '../elegant/transform';
  * @link https://github.com/soybeanjs/elegant-router?tab=readme-ov-file#custom-route
  */
 const customRoutes: CustomRoute[] = [
-  // 布局视图路由已经在 elegant/routes.ts 中定义
+  {
+    name: 'admin-data-manage',
+    path: '/admin/data-manage',
+    component: 'layout.base$view.admin-data-manage',
+    meta: {
+      title: 'data-manage',
+      i18nKey: 'route.data-manage',
+      icon: 'mdi:database-cog',
+      roles: ['ROLE_ADMIN'],
+      order: 10
+    }
+  }
 ];
 
 /** create routes when the auth route mode is static */

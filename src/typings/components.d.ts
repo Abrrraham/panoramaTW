@@ -48,6 +48,7 @@ declare module 'vue' {
     ATree: typeof import('ant-design-vue/es')['Tree']
     AttributeTable: typeof import('./../components/common/AttributeTable.vue')['default']
     AttributeTableWindow: typeof import('./../components/common/AttributeTableWindow.vue')['default']
+    AUpload: typeof import('ant-design-vue/es')['Upload']
     AWatermark: typeof import('ant-design-vue/es')['Watermark']
     BetterScroll: typeof import('./../components/custom/better-scroll.vue')['default']
     ButtonIcon: typeof import('./../components/custom/button-icon.vue')['default']

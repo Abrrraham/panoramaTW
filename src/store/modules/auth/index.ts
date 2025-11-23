@@ -64,13 +64,8 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
     let error = false;
     let loginToken: Api.Auth.LoginToken | null = null;
     try {
-      const res = await fetchLogin({ userName, password });
+      const res = await fetchLogin({ username: userName, password });
       loginToken = { token: res.token, refreshToken: res.refreshToken || '' } as any;
-      // 同步缓存用户名（使用原生 localStorage，避免 Local 键名类型约束）
-      try { window.localStorage.setItem('login_user_name', userName); } catch {}
-      // 立即设置一次用户信息，确保头部立刻展示用户名与管理员标识
-      const preInfo = await fetchGetUserInfo(userName);
-      Object.assign(userInfo, preInfo as any);
     } catch {
       error = true;
     }
@@ -107,8 +102,7 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
 
   async function getUserInfo() {
     try {
-      const nameInStg = window.localStorage.getItem('login_user_name') || '';
-      const info = await fetchGetUserInfo(nameInStg);
+      const info = await fetchGetUserInfo();
       Object.assign(userInfo, info as any);
       return true;
     } catch {

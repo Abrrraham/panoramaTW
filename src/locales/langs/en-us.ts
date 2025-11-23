@@ -178,7 +178,8 @@ const local: App.I18n.Schema = {
     exception: 'Exception',
     exception_403: '403',
     exception_404: '404',
-    exception_500: '500'
+    exception_500: '500',
+    'data-manage': 'Data Management'
   },
   page: {
     login: {
@@ -437,7 +438,7 @@ const local: App.I18n.Schema = {
     },
     pwd: {
       required: 'Please enter password',
-      invalid: '6-18 characters, including letters, numbers, and underscores'
+      invalid: '6-32 characters, letters, numbers or symbols'
     },
     confirmPwd: {
       required: 'Please enter password again',

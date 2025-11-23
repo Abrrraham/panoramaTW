@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import mapboxgl from 'mapbox-gl';
 import { SimpleScrollbar } from '@sa/materials';
@@ -21,6 +21,9 @@ import { explodeFeatureToPartFeatures } from '@/utils/mapUtils/featureUtils';
 import ChatBox from './modules/chat-box.vue';
 import type { ChatBoxExpose } from './modules/chat-box.vue';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import { useAuthStore } from '@/store/modules/auth';
+import { getAuthorization } from '@/service/request/shared';
+import { mapRequestHead } from '@/service/request';
 
 mapboxgl.accessToken =
   import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ||
@@ -147,7 +150,13 @@ const handleLayerRightClick = (event: MouseEvent, layerKey: string, layerTitle: 
 // 处理图层管理右键菜单点击
 const handleLayerMenuClick = (menuKey: string) => {
   console.log(`图层管理菜单点击: ${menuKey} - ${currentContextLayer.value?.title}`);
-  
+  if (menuKey === 'removeLayer' && !isAdmin.value) {
+    window.$message?.error('没有权限执行此操作');
+    layerContextMenuVisible.value = false;
+    currentContextLayer.value = null;
+    return;
+  }
+
   if (currentContextLayer.value) {
     // 调用原有的图层菜单处理函数
     onLayerContextMenuClick(menuKey, currentContextLayer.value.key, currentContextLayer.value.title);
@@ -714,13 +723,31 @@ onMounted(async () => {
 
     const mapContainerEl = resolveContainer();
 
-    map = new mapboxgl.Map({
-      container: mapContainerEl,
-      style: 'mapbox://styles/mapbox/standard',
-      center: [115.43530389617354, 7.325620166519911],
-      zoom: 3.6,
-      language: 'zh-Hans'
-    });
+  const backendPrefix = mapRequestHead;
+
+  map = new mapboxgl.Map({
+    container: mapContainerEl,
+    style: 'mapbox://styles/mapbox/standard',
+    center: [115.43530389617354, 7.325620166519911],
+    zoom: 3.6,
+    language: 'zh-Hans',
+    transformRequest: (url: string) => {
+      const isBackendRequest = url.startsWith(backendPrefix) || url.includes('/api/v0/');
+      if (isBackendRequest) {
+        const Authorization = getAuthorization();
+        if (Authorization) {
+          return {
+            url,
+            headers: {
+              Authorization
+            }
+          };
+        }
+      }
+
+      return { url };
+    }
+  });
 
     // 比例尺控件
 
@@ -1283,6 +1310,7 @@ const openLayoutViewWithBBox = () => {
       </div>
       <div class="border-t border-gray-200 my-1"></div>
       <div
+        v-if="isAdmin"
         class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 text-red-500"
         @click="handleLayerMenuClick('removeLayer')"
       >
@@ -1448,3 +1476,5 @@ body > div:has([data-testid*="suggestion"]) {
   top: auto !important;
 }
 </style>
+const authStore = useAuthStore();
+const isAdmin = computed(() => authStore.userInfo.roles.includes('ROLE_ADMIN'));

@@ -1,7 +1,7 @@
-// 回退为前端模拟实现
+import { dataRequest } from '../request';
 
 export interface LoginPayload {
-  userName: string;
+  username: string;
   password: string;
 }
 
@@ -16,18 +16,25 @@ export interface UserInfo {
   roles: string[];
 }
 
-export async function fetchLogin(payload: LoginPayload): Promise<LoginToken> {
-  const token = btoa(`${payload.userName}:${Date.now()}`);
-  return Promise.resolve({ token, refreshToken: token });
+export function fetchLogin(payload: LoginPayload) {
+  return dataRequest<LoginToken>({
+    url: '/auth/login',
+    method: 'post',
+    data: payload
+  });
 }
 
-export async function fetchGetUserInfo(userName: string): Promise<UserInfo> {
-  const isAdmin = userName?.toLowerCase() === 'admin';
-  return Promise.resolve({ userId: userName, userName, roles: [isAdmin ? 'ADMIN' : 'USER'] });
+export function fetchGetUserInfo() {
+  return dataRequest<UserInfo>({
+    url: '/auth/me',
+    method: 'get'
+  });
 }
 
-export async function fetchRefreshToken(refreshToken: string): Promise<LoginToken> {
-  // 模拟刷新token，直接返回相同的token
-  return Promise.resolve({ token: refreshToken, refreshToken });
+export function fetchRefreshToken(refreshToken: string) {
+  return dataRequest<LoginToken>({
+    url: '/auth/refresh',
+    method: 'post',
+    data: { refreshToken }
+  });
 }
-
