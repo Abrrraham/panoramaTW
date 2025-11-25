@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { Modal } from 'ant-design-vue';
 import { useAuthStore } from '@/store/modules/auth';
-import { useRouterPush } from '@/hooks/common/router';
 import { $t } from '@/locales';
 
 defineOptions({
@@ -9,7 +8,6 @@ defineOptions({
 });
 
 const authStore = useAuthStore();
-const { toLogin } = useRouterPush();
 
 // 已移除未使用的 loginOrRegister，避免 TS6133
 

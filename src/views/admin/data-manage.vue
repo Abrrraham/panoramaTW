@@ -1,84 +1,13 @@
-<template>
-  <div class="h-full flex gap-4">
-    <ACard class="w-1/3 h-full" title="图层目录">
-      <ATree
-        :tree-data="treeData"
-        default-expand-all
-        block-node
-        :loading="loadingTree"
-        @select="handleSelect"
-      />
-      <AButton class="mt-4 w-full" @click="refreshTree" :loading="loadingTree">
-        刷新
-      </AButton>
-    </ACard>
-    <ACard class="flex-1 h-full" :title="selectedNode?.title || '新增图层'">
-      <AForm layout="vertical" :model="form" @submit.prevent="handleSubmit">
-        <AFormItem label="父节点ID" required>
-          <AInput v-model:value="form.parentId" placeholder="输入父节点 ID" />
-        </AFormItem>
-        <AFormItem label="类型">
-          <ARadioGroup v-model:value="form.kind">
-            <ARadio value="vector">矢量</ARadio>
-            <ARadio value="raster">栅格</ARadio>
-            <ARadio value="3d">3D Tiles</ARadio>
-          </ARadioGroup>
-        </AFormItem>
-        <AFormItem label="图层名称" required>
-          <AInput v-model:value="form.layerName" />
-        </AFormItem>
-        <AFormItem label="表名 / 文件名" required>
-          <AInput v-model:value="form.tableName" />
-        </AFormItem>
-        <AFormItem label="SRID" v-if="form.kind === 'vector'">
-          <AInput v-model:value="form.usage.srid" />
-        </AFormItem>
-        <AFormItem label="几何类型" v-if="form.kind === 'vector'">
-          <ASelect
-            v-model:value="form.usage.type"
-            :options="geometryOptions"
-            style="width: 200px"
-          />
-        </AFormItem>
-        <AFormItem label="显示字段" v-if="form.kind === 'vector'">
-          <AInput v-model:value="form.usage.visualizationField" placeholder="逗号分隔" />
-        </AFormItem>
-        <AFormItem label="详细字段" v-if="form.kind === 'vector'">
-          <AInput v-model:value="form.usage.detailField" placeholder="逗号分隔" />
-        </AFormItem>
-        <AFormItem label="数据文件">
-          <AUpload
-            :file-list="fileList"
-            :before-upload="beforeUpload"
-            :max-count="1"
-            @remove="handleRemove"
-          >
-            <AButton>选择文件</AButton>
-          </AUpload>
-        </AFormItem>
-        <ASpace>
-          <AButton type="primary" html-type="submit" :loading="submitting">
-            保存
-          </AButton>
-          <AButton danger @click="handleDelete" :disabled="!selectedNode" :loading="deleting">
-            删除所选图层
-          </AButton>
-        </ASpace>
-      </AForm>
-    </ACard>
-  </div>
-</template>
-
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import type { UploadProps } from 'ant-design-vue';
 import {
-  createVectorLayer,
-  deleteVectorLayer,
-  createRasterLayer,
-  deleteRasterLayer,
   create3dLayer,
-  delete3dLayer
+  createRasterLayer,
+  createVectorLayer,
+  delete3dLayer,
+  deleteRasterLayer,
+  deleteVectorLayer
 } from '@/service/api/admin';
 import { convertToTreeData, initData } from '@/utils/mapUtils/layerData';
 
@@ -128,7 +57,8 @@ function buildFormData() {
       usage: form.usage
     })
   );
-  const raw = fileList.value[0]?.originFileObj as File | undefined;
+  const list = fileList.value || [];
+  const raw = list[0]?.originFileObj as File | undefined;
   if (raw) {
     fd.append('file', raw);
   }
@@ -139,7 +69,7 @@ async function refreshTree() {
   loadingTree.value = true;
   try {
     const data = await initData();
-    const tree = convertToTreeData(data.children || []);
+    const tree = convertToTreeData(data.children || []) ?? [];
     treeData.value = tree;
   } finally {
     loadingTree.value = false;
@@ -197,6 +127,56 @@ async function handleDelete() {
 
 onMounted(refreshTree);
 </script>
+
+<template>
+  <div class="h-full flex gap-4">
+    <ACard class="h-full w-1/3" title="图层目录">
+      <ATree :tree-data="treeData" default-expand-all block-node :loading="loadingTree" @select="handleSelect" />
+      <AButton class="mt-4 w-full" :loading="loadingTree" @click="refreshTree">刷新</AButton>
+    </ACard>
+    <ACard class="h-full flex-1" :title="selectedNode?.title || '新增图层'">
+      <AForm layout="vertical" :model="form" @submit.prevent="handleSubmit">
+        <AFormItem label="父节点ID" required>
+          <AInput v-model:value="form.parentId" placeholder="输入父节点 ID" />
+        </AFormItem>
+        <AFormItem label="类型">
+          <ARadioGroup v-model:value="form.kind">
+            <ARadio value="vector">矢量</ARadio>
+            <ARadio value="raster">栅格</ARadio>
+            <ARadio value="3d">3D Tiles</ARadio>
+          </ARadioGroup>
+        </AFormItem>
+        <AFormItem label="图层名称" required>
+          <AInput v-model:value="form.layerName" />
+        </AFormItem>
+        <AFormItem label="表名 / 文件名" required>
+          <AInput v-model:value="form.tableName" />
+        </AFormItem>
+        <AFormItem v-if="form.kind === 'vector'" label="SRID">
+          <AInput v-model:value="form.usage.srid" />
+        </AFormItem>
+        <AFormItem v-if="form.kind === 'vector'" label="几何类型">
+          <ASelect v-model:value="form.usage.type" :options="geometryOptions" style="width: 200px" />
+        </AFormItem>
+        <AFormItem v-if="form.kind === 'vector'" label="显示字段">
+          <AInput v-model:value="form.usage.visualizationField" placeholder="逗号分隔" />
+        </AFormItem>
+        <AFormItem v-if="form.kind === 'vector'" label="详细字段">
+          <AInput v-model:value="form.usage.detailField" placeholder="逗号分隔" />
+        </AFormItem>
+        <AFormItem label="数据文件">
+          <AUpload :file-list="fileList" :before-upload="beforeUpload" :max-count="1" @remove="handleRemove">
+            <AButton>选择文件</AButton>
+          </AUpload>
+        </AFormItem>
+        <ASpace>
+          <AButton type="primary" html-type="submit" :loading="submitting">保存</AButton>
+          <AButton danger :disabled="!selectedNode" :loading="deleting" @click="handleDelete">删除所选图层</AButton>
+        </ASpace>
+      </AForm>
+    </ACard>
+  </div>
+</template>
 
 <style scoped>
 .h-full {

@@ -22,7 +22,7 @@ export default class MapScene {
     center: [121.58183804471179, 3.5163677796196424],
     pitch: 0,
     bearing: 0,
-    zoom: 3.6
+    zoom: 8
   };
   _nodeStatus = reactive<Record<string, boolean>>({});
   nodeStatus: Record<string, boolean> | null = null; // 代理对象，用于监听nodeStatus变化
@@ -190,6 +190,7 @@ export default class MapScene {
    * @param filter 可选的过滤条件
    * @returns 要素数组
    */
+  /* eslint-disable complexity, max-depth, no-continue, @typescript-eslint/no-unused-vars */
   queryLayerFeatures(nodeId: string, filter?: any[]): any[] {
     const node = this.findNodeById(nodeId);
     if (!node) {
@@ -271,6 +272,7 @@ export default class MapScene {
       return [];
     }
   }
+  /* eslint-enable complexity, max-depth, no-continue, @typescript-eslint/no-unused-vars */
 
   get terrainId(): string | null {
     const terrain = this.map.getTerrain();

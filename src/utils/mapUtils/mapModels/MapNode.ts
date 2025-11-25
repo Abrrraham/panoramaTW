@@ -26,6 +26,7 @@ export default class MapNode {
   id: string = '';
   layers: MapLayer[] = [];
   name: string | null = null;
+  nameCn: string | null = null;
   type: number = NodeType.CUSTOM;
   source: string | null = null;
   labelField: string | null = null;
@@ -42,6 +43,7 @@ export default class MapNode {
     node.scene = _scene;
     node.id = data.id;
     node.name = data.name;
+    node.nameCn = data.name_cn ?? null;
 
     const category = data.category;
     const usage = data.usage;
@@ -131,7 +133,7 @@ export default class MapNode {
     node.name = name;
     node.geojsonData = featureCollection;
     node.scene = _scene;
-    
+
     // 根据FeatureCollection中第一个要素的几何类型确定节点类型
     if (featureCollection.features && featureCollection.features.length > 0) {
       const firstFeature = featureCollection.features[0];
@@ -211,12 +213,7 @@ export default class MapNode {
   }
 
   loadAll() {
-    // 确保样式加载完成后再添加 source/layer
-    if (this.map && !this.map.isStyleLoaded()) {
-      this.map.once('load', () => this.loadAll());
-      return;
-    }
-
+    // 直接尝试加载图层；若样式尚未完全就绪，由下方 try/catch 兜底避免报错
     this.active = true;
     console.log(`加载图层节点: ${this.id}, 类型: ${this.type}, 数据源: ${this.source}`);
 

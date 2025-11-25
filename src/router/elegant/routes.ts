@@ -64,6 +64,17 @@ export const generatedRoutes: GeneratedRoute[] = [
     ]
   },
   {
+    name: 'geo-tools',
+    path: '/geo-tools',
+    component: 'layout.base$view.geo-tools',
+    meta: {
+      title: 'geo-tools',
+      i18nKey: 'route.geo-tools',
+      icon: 'mdi:earth',
+      order: 7
+    }
+  },
+  {
     name: 'home',
     path: '/home',
     component: 'layout.base$view.home',

@@ -1,6 +1,7 @@
 import mapboxgl from 'mapbox-gl';
-import MapScene from '@/utils/mapUtils/mapModels/MapScene';
+import type MapScene from '@/utils/mapUtils/mapModels/MapScene';
 
+/* eslint-disable max-params, complexity, no-promise-executor-return, default-case */
 export async function zoomToLayer(
   scene: MapScene | null | undefined,
   map: mapboxgl.Map,
@@ -11,11 +12,6 @@ export async function zoomToLayer(
     const node = scene?.findNodeById(layerKey);
     if (!node) {
       window.$message?.warning('未找到该图层');
-      return;
-    }
-
-    if ((node as any).viewState) {
-      map.easeTo((node as any).viewState);
       return;
     }
 
@@ -53,11 +49,15 @@ export async function zoomToLayer(
                 hasValidGeometry = true;
                 break;
               case 'MultiLineString':
-                feature.geometry.coordinates.forEach((line: [number, number][]) => line.forEach((coord: [number, number]) => bounds.extend(coord)));
+                feature.geometry.coordinates.forEach((line: [number, number][]) =>
+                  line.forEach((coord: [number, number]) => bounds.extend(coord))
+                );
                 hasValidGeometry = true;
                 break;
               case 'MultiPolygon':
-                feature.geometry.coordinates.forEach((polygon: [number, number][][]) => polygon[0].forEach((coord: [number, number]) => bounds.extend(coord)));
+                feature.geometry.coordinates.forEach((polygon: [number, number][][]) =>
+                  polygon[0].forEach((coord: [number, number]) => bounds.extend(coord))
+                );
                 hasValidGeometry = true;
                 break;
             }
@@ -95,13 +95,9 @@ export async function zoomToLayer(
       }
     }
 
-    window.$message?.info(`无法确定图层 ${layerTitle} 的范围，已设置为默认视图`);
-    map.easeTo({ center: [115.43530389617354, 7.325620166519911], zoom: 8 });
+    window.$message?.info(`无法确定图层 ${layerTitle} 的范围`);
   } catch (error) {
     console.error('缩放到图层时出错:', error);
     window.$message?.error('缩放到图层失败');
   }
 }
-
-
-

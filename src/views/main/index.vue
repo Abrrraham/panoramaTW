@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+/* eslint-disable @typescript-eslint/no-use-before-define, no-plusplus, no-lonely-if, complexity, max-depth, consistent-return, @typescript-eslint/no-unused-vars */
+import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import mapboxgl from 'mapbox-gl';
 import { SimpleScrollbar } from '@sa/materials';
 import type { AntTreeNodeCheckedEvent, AntTreeNodeDropEvent, TreeProps } from 'ant-design-vue/es/tree';
-import { AppstoreFilled, DatabaseFilled, DeleteOutlined, TableOutlined, ZoomInOutlined, PlusOutlined } from '@ant-design/icons-vue';
+import {
+  AppstoreFilled,
+  DatabaseFilled,
+  DeleteOutlined,
+  PlusOutlined,
+  TableOutlined,
+  ZoomInOutlined
+} from '@ant-design/icons-vue';
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
 import type { Feature, GeoJsonProperties, Geometry } from 'geojson';
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
@@ -13,17 +21,17 @@ import { addScaleControl, bindScaleAutoFade } from '@/utils/mapUtils/scaleContro
 import { ensureMapContainerSize } from '@/utils/mapUtils/layout';
 import { bindTileErrorOnceTip } from '@/utils/mapUtils/errorHandler';
 import MapScene from '@/utils/mapUtils/mapModels/MapScene';
-import { initData, extractNodes, convertToTreeData } from '@/utils/mapUtils/layerData';
+import type MapNode from '@/utils/mapUtils/mapModels/MapNode';
+import { convertToTreeData, extractNodes, initData } from '@/utils/mapUtils/layerData';
 import { addBoxZoomControls, createHorizontalControlBar, selectBBox } from '@/utils/mapUtils/controls';
 import { zoomToLayer } from '@/utils/mapUtils/zoomToLayer';
 import AttributeTableWindow from '@/components/common/AttributeTableWindow.vue';
 import { explodeFeatureToPartFeatures } from '@/utils/mapUtils/featureUtils';
-import ChatBox from './modules/chat-box.vue';
-import type { ChatBoxExpose } from './modules/chat-box.vue';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { useAuthStore } from '@/store/modules/auth';
 import { getAuthorization } from '@/service/request/shared';
 import { mapRequestHead } from '@/service/request';
+import ChatBox from './modules/chat-box.vue';
+import type { ChatBoxExpose } from './modules/chat-box.vue';
 
 mapboxgl.accessToken =
   import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ||
@@ -50,10 +58,24 @@ const checkedKeys = ref<string[]>([]);
 
 const drawerOpen = ref(true);
 
+type GeoAnalysisConfig = {
+  layerNameKeywords?: string[];
+  tableNames?: string[];
+};
+
+const GEO_ANALYSIS_CONFIG: Record<string, GeoAnalysisConfig> = {
+  geoOverview: {
+    layerNameKeywords: ['行政区划', '人口', '港口']
+  }
+};
+
+const pendingGeoAnalysis = ref<string | null>(null);
+
 const drawData = ref<Feature<Geometry, GeoJsonProperties> | null>(null);
 
 // 路由
 const router = useRouter();
+const route = useRoute();
 
 // 自定义右键菜单状态
 const customContextMenuVisible = ref(false);
@@ -85,38 +107,34 @@ const suppressSelectionOnContext = ref(false);
 // 最近一次稳定的选择快照（仅在非右键情形下更新）
 const lastStableSelected = ref<Feature[]>([]);
 
-const showDrawer = () => {
-  drawerOpen.value = true;
-};
-
 // 处理右键菜单显示
 const handleRightClickMenu = (event: MouseEvent, nodeData: any) => {
   console.log('Right click detected on:', nodeData.title, event);
   event.preventDefault();
   event.stopPropagation();
-  
+
   // 设置菜单位置
   customContextMenuPosition.value = {
     x: event.clientX,
     y: event.clientY
   };
-  
+
   // 设置当前节点和显示菜单
   currentContextNode.value = nodeData;
   customContextMenuVisible.value = true;
-  
+
   console.log('Custom context menu shown for:', nodeData.title);
 };
 
 // 处理数据目录右键菜单点击
 const handleDataMenuClick = (menuKey: string) => {
   console.log(`数据目录菜单点击: ${menuKey} - ${currentContextNode.value?.title}`);
-  
+
   if (menuKey === 'addToLayer' && currentContextNode.value) {
     // 调用添加图层的功能
     onContextMenuClick(currentContextNode.value.key, currentContextNode.value.title);
   }
-  
+
   // 隐藏菜单
   customContextMenuVisible.value = false;
   currentContextNode.value = null;
@@ -133,35 +151,28 @@ const handleLayerRightClick = (event: MouseEvent, layerKey: string, layerTitle: 
   console.log('Layer right click detected:', layerKey, layerTitle, event);
   event.preventDefault();
   event.stopPropagation();
-  
+
   // 设置菜单位置
   layerContextMenuPosition.value = {
     x: event.clientX,
     y: event.clientY
   };
-  
+
   // 设置当前图层和显示菜单
   currentContextLayer.value = { key: layerKey, title: layerTitle };
   layerContextMenuVisible.value = true;
-  
+
   console.log('Layer context menu shown for:', layerTitle);
 };
 
 // 处理图层管理右键菜单点击
 const handleLayerMenuClick = (menuKey: string) => {
   console.log(`图层管理菜单点击: ${menuKey} - ${currentContextLayer.value?.title}`);
-  if (menuKey === 'removeLayer' && !isAdmin.value) {
-    window.$message?.error('没有权限执行此操作');
-    layerContextMenuVisible.value = false;
-    currentContextLayer.value = null;
-    return;
-  }
-
   if (currentContextLayer.value) {
     // 调用原有的图层菜单处理函数
     onLayerContextMenuClick(menuKey, currentContextLayer.value.key, currentContextLayer.value.title);
   }
-  
+
   // 隐藏菜单
   layerContextMenuVisible.value = false;
   currentContextLayer.value = null;
@@ -229,7 +240,7 @@ const onContextMenuClick = (id: string, title: string) => {
   // 加载图层节点
   const loadSuccess = scene.loadNode(id);
   console.log(`loadNode(${id}) 结果:`, loadSuccess);
-  
+
   if (loadSuccess) {
     console.log(`图层 ${id} 加载成功，添加到图层管理面板`);
     // 添加到图层管理面板
@@ -250,7 +261,10 @@ const onContextMenuClick = (id: string, title: string) => {
       window.$message?.success(`已添加图层: ${title}`);
     } else {
       console.error(`节点 ${id} 不存在于scene中`);
-      console.log('scene中的所有节点:', scene.nodes.map(n => ({ id: n.id, name: n.name, active: n.active })));
+      console.log(
+        'scene中的所有节点:',
+        scene.nodes.map(n => ({ id: n.id, name: n.name, active: n.active }))
+      );
       window.$message?.warning('该图层数据未就绪或不可用');
     }
   }
@@ -282,7 +296,8 @@ const onLayerTreeDrop = (info: AntTreeNodeDropEvent) => {
 
   // 计算插入的新位置（树已禁止 dropPosition === 0）
   let newIndex = dropIndex;
-  if (info.dropPosition === -1) newIndex = dropIndex;       // 上方
+  if (info.dropPosition === -1)
+    newIndex = dropIndex; // 上方
   else if (info.dropPosition === 1) newIndex = dropIndex + 1; // 下方
 
   // 插入到新位置
@@ -314,9 +329,7 @@ const onLayerTreeDrop = (info: AntTreeNodeDropEvent) => {
 
   // 全量重排：按面板从下到上依次移到顶，确保压盖顺序一致
   const forceReorderByPanel = () => {
-    const items = (layerTreeData.value || [])
-      .map(it => String(it?.key))
-      .filter(k => !!scene?.findNodeById(k)); // 过滤分组/无效节点
+    const items = (layerTreeData.value || []).map(it => String(it?.key)).filter(k => Boolean(scene?.findNodeById(k))); // 过滤分组/无效节点
     for (let i = items.length - 1; i >= 0; i--) {
       const id = items[i];
       scene?.loadNode(id);
@@ -349,7 +362,10 @@ const onLayerTreeDrop = (info: AntTreeNodeDropEvent) => {
         let anchor: string | null = null;
         for (let i = drawGroupIdx + 1; i < panel.length; i++) {
           const k = String(panel[i]?.key);
-          if (scene?.findNodeById(k)) { anchor = k; break; }
+          if (scene?.findNodeById(k)) {
+            anchor = k;
+            break;
+          }
         }
         moveDrawBlock(anchor);
       }
@@ -365,30 +381,30 @@ const onLayerCheckClick = (_: any, e: AntTreeNodeCheckedEvent) => {
     // 处理绘制要素分组的勾选
     const drawGroup = layerTreeData.value?.find(item => item?.key === 'draw_features');
     console.log('绘制要素分组勾选状态变化:', { checked: e.checked, children: drawGroup?.children });
-    
+
     if (drawGroup?.children) {
       if (e.checked) {
         // 显示所有绘制要素
         drawGroup.children.forEach(child => {
           const childId = String(child.key);
           console.log(`处理绘制要素: ${childId}, 当前checkedKeys:`, checkedKeys.value);
-          
-                  // 强制添加到checkedKeys并显示图层
-        if (!checkedKeys.value.includes(childId)) {
-          checkedKeys.value.push(childId);
-        }
-        
-        // 强制更新checkedKeys状态
-        checkedKeys.value = [...checkedKeys.value];
-          
+
+          // 强制添加到checkedKeys并显示图层
+          if (!checkedKeys.value.includes(childId)) {
+            checkedKeys.value.push(childId);
+          }
+
+          // 强制更新checkedKeys状态
+          checkedKeys.value = [...checkedKeys.value];
+
           // 对于绘制要素，需要先确保节点已加载，然后显示
           const node = scene?.findNodeById(childId);
-          console.log(`节点状态: ${childId}`, { 
-            exists: !!node, 
-            active: node?.active, 
-            layers: node?.layers?.length 
+          console.log(`节点状态: ${childId}`, {
+            exists: Boolean(node),
+            active: node?.active,
+            layers: node?.layers?.length
           });
-          
+
           if (node) {
             if (!node.active) {
               // 如果节点存在但未激活，先加载再显示
@@ -399,7 +415,7 @@ const onLayerCheckClick = (_: any, e: AntTreeNodeCheckedEvent) => {
               console.log(`直接显示节点: ${childId}`);
               scene?.openNode(childId);
             }
-            
+
             // 确保图层可见
             setTimeout(() => {
               const updatedNode = scene?.findNodeById(childId);
@@ -445,8 +461,6 @@ const onLayerCheckClick = (_: any, e: AntTreeNodeCheckedEvent) => {
     }
   }
 };
-
- 
 
 /// /////////// 地图绘制 ///////////////
 const startDraw = () => {
@@ -517,10 +531,7 @@ const onLayerContextMenuClick = async (menuKey: string, layerKey: string, layerT
         // 从勾选中移除组本身
         checkedKeys.value = checkedKeys.value.filter(k => k !== 'draw_features');
         // 若当前属性表指向组或其任一子节点，关闭
-        if (
-          selectedLayerId.value === 'draw_features' ||
-          childIds.includes(selectedLayerId.value)
-        ) {
+        if (selectedLayerId.value === 'draw_features' || childIds.includes(selectedLayerId.value)) {
           attributeTableVisible.value = false;
           selectedLayerId.value = '';
           selectedLayerName.value = '';
@@ -616,9 +627,8 @@ const confirmAddFeatureToLayer = () => {
 
   // 为所有选中的要素创建带属性的新要素（Multi* 拆分为逐部件要素）
   const featuresWithAttributes = selectedDrawFeatures.value.flatMap((originalFeature, index) => {
-    const nameWithIndex = selectedDrawFeatures.value.length > 1 
-      ? `${featureName.value}_${index + 1}` 
-      : featureName.value;
+    const nameWithIndex =
+      selectedDrawFeatures.value.length > 1 ? `${featureName.value}_${index + 1}` : featureName.value;
     return explodeFeatureToPartFeatures(originalFeature, nameWithIndex);
   });
 
@@ -630,18 +640,18 @@ const confirmAddFeatureToLayer = () => {
 
   // 生成唯一图层ID
   const layerId = `draw_${Date.now()}`;
-  
+
   // 保存所有要素的属性数据到本地存储
   const allProperties = featuresWithAttributes.map(feature => feature.properties);
   drawFeaturesData.value.set(layerId, allProperties);
-  
+
   // 添加到场景中（使用FeatureCollection）
   scene?.addTempNodeFromCollection(layerId, featureName.value, featureCollection);
-  
+
   // 加载并显示图层
   const loadSuccess = scene?.loadNode(layerId);
   console.log(`加载绘制要素图层: ${layerId}, 成功: ${loadSuccess}`);
-  
+
   // 即使loadNode返回false，也要添加到图层管理（可能是已经加载过了）
   if (loadSuccess || scene?.findNodeById(layerId)) {
     // 添加到绘制要素分组
@@ -653,25 +663,25 @@ const confirmAddFeatureToLayer = () => {
         isLayer: false
       });
     }
-    
+
     const drawGroup = layerTreeData.value?.find(item => item?.key === 'draw_features');
     drawGroup?.children?.push({
       key: layerId,
       title: `${featureName.value} (${featuresWithAttributes.length}个要素)`,
       isLayer: true
     });
-    
+
     checkedKeys.value.push(layerId);
-    
+
     // 确保节点状态正确
     const node = scene?.findNodeById(layerId);
-    console.log(`绘制要素节点状态: ${layerId}`, { 
-      exists: !!node, 
-      active: node?.active, 
+    console.log(`绘制要素节点状态: ${layerId}`, {
+      exists: Boolean(node),
+      active: node?.active,
       layers: node?.layers?.length,
       featureCount: featuresWithAttributes.length
     });
-    
+
     console.log('添加绘制要素到图层:', {
       id: layerId,
       name: featureName.value,
@@ -685,7 +695,7 @@ const confirmAddFeatureToLayer = () => {
 
   window.$message?.success(`已添加 ${selectedDrawFeatures.value.length} 个要素到图层 "${featureName.value}"`);
   featureNameModalVisible.value = false;
-  
+
   // 清除绘制的要素（可选）
   // draw.deleteAll();
   draw.deleteAll(); // 清空Draw控件自带的gl-draw-*图层显示
@@ -723,31 +733,73 @@ onMounted(async () => {
 
     const mapContainerEl = resolveContainer();
 
-  const backendPrefix = mapRequestHead;
+    const backendPrefix = mapRequestHead;
 
-  map = new mapboxgl.Map({
-    container: mapContainerEl,
-    style: 'mapbox://styles/mapbox/standard',
-    center: [115.43530389617354, 7.325620166519911],
-    zoom: 3.6,
-    language: 'zh-Hans',
-    transformRequest: (url: string) => {
-      const isBackendRequest = url.startsWith(backendPrefix) || url.includes('/api/v0/');
-      if (isBackendRequest) {
-        const Authorization = getAuthorization();
-        if (Authorization) {
-          return {
-            url,
-            headers: {
-              Authorization
-            }
-          };
+    map = new mapboxgl.Map({
+      container: mapContainerEl,
+      style: 'mapbox://styles/mapbox/standard',
+      center: [115.43530389617354, 7.325620166519911],
+      zoom: 3.6,
+      language: 'zh-Hans',
+      transformRequest: (url: string) => {
+        const isBackendRequest = url.startsWith(backendPrefix) || url.includes('/api/v0/');
+        if (isBackendRequest) {
+          const Authorization = getAuthorization();
+          if (Authorization) {
+            return {
+              url,
+              headers: {
+                Authorization
+              }
+            };
+          }
+        }
+
+        return { url };
+      }
+    });
+
+    // 恢复上次视图状态（center/zoom/bearing/pitch）
+    try {
+      const vsStr = sessionStorage.getItem('layout_view_state');
+      if (vsStr) {
+        const vs = JSON.parse(vsStr) as { center: [number, number]; zoom: number; bearing: number; pitch: number };
+        if (vs && Array.isArray(vs.center)) {
+          map.jumpTo({
+            center: vs.center as any,
+            zoom: Number.isFinite(vs.zoom) ? vs.zoom : map.getZoom(),
+            bearing: Number.isFinite(vs.bearing) ? vs.bearing : map.getBearing(),
+            pitch: Number.isFinite(vs.pitch) ? vs.pitch : map.getPitch()
+          });
         }
       }
+    } catch {}
 
-      return { url };
-    }
-  });
+    // 持久化视图状态，跨路由返回后不丢失
+    const persistViewState = () => {
+      try {
+        const center = map.getCenter();
+        const view = {
+          center: [center.lng, center.lat] as [number, number],
+          zoom: map.getZoom(),
+          bearing: map.getBearing(),
+          pitch: map.getPitch()
+        };
+        sessionStorage.setItem('layout_view_state', JSON.stringify(view));
+      } catch {}
+    };
+    map.on('moveend', persistViewState);
+    map.on('zoomend', persistViewState);
+    map.on('rotateend', persistViewState);
+    map.on('pitchend', persistViewState);
+    onUnmounted(() => {
+      try {
+        map.off('moveend', persistViewState);
+        map.off('zoomend', persistViewState);
+        map.off('rotateend', persistViewState);
+        map.off('pitchend', persistViewState);
+      } catch {}
+    });
 
     // 比例尺控件
 
@@ -756,7 +808,11 @@ onMounted(async () => {
 
     // 容器自适应
     const disposeLayout = ensureMapContainerSize(map);
-    onUnmounted(() => { try { disposeLayout(); } catch {} });
+    onUnmounted(() => {
+      try {
+        disposeLayout();
+      } catch {}
+    });
 
     // 搜索控件
     setupSearchControl(map);
@@ -767,7 +823,7 @@ onMounted(async () => {
     setTimeout(() => {
       // 创建水平控制栏并重新排列控件
       createHorizontalControlBar(map, draw);
-      
+
       // 调试：检查所有控件是否存在
       console.log('检查控件存在情况:');
       console.log('比例尺控件:', document.querySelector('.mapboxgl-ctrl-scale'));
@@ -791,27 +847,27 @@ onMounted(async () => {
         scaleControl.classList.add(
           'h-7', // height
           'bg-white', // 白色背景
-          'bg-opacity-50', 
-          'leading-5', 
-          'text-center', 
-          'text-sm', 
-          'font-medium', 
-          'text-gray-900', 
-          'transition-all', 
-          'duration-50', 
-          'px-2', 
-          'py-1', 
-          'rounded-sm', 
-          'border-b-2', 
-          'border-l-0', 
-          'border-r-0', 
-          'border-black', 
-          'relative', 
-          'whitespace-nowrap', 
-          'overflow-hidden', 
-          'text-ellipsis', 
-          'min-w-0', 
-          'z-20' 
+          'bg-opacity-50',
+          'leading-5',
+          'text-center',
+          'text-sm',
+          'font-medium',
+          'text-gray-900',
+          'transition-all',
+          'duration-50',
+          'px-2',
+          'py-1',
+          'rounded-sm',
+          'border-b-2',
+          'border-l-0',
+          'border-r-0',
+          'border-black',
+          'relative',
+          'whitespace-nowrap',
+          'overflow-hidden',
+          'text-ellipsis',
+          'min-w-0',
+          'z-20'
         );
 
         // 线段样式的刻度标记
@@ -867,40 +923,32 @@ onMounted(async () => {
       // 导航控件样式 - 右上角，避开聊天框
       const navControl = document.querySelector('.mapboxgl-ctrl-top-right') as HTMLElement;
       if (navControl) {
-
         const navGroup = navControl.querySelector('.mapboxgl-ctrl-group');
         if (navGroup) {
-          navGroup.classList.add(
-            'shadow-lg', 
-            'rounded-lg', 
-            'border', 
-            'border-gray-200', 
-            'bg-white', 
-            'overflow-hidden' 
-          );
+          navGroup.classList.add('shadow-lg', 'rounded-lg', 'border', 'border-gray-200', 'bg-white', 'overflow-hidden');
 
           // 导航按钮添加样式和图标
           const navButtons = navGroup.querySelectorAll('button');
           navButtons.forEach((button, index) => {
             button.classList.add(
-              'bg-white', 
-              'hover:bg-gray-100', 
-              'transition-colors', 
-              'duration-200', 
-              'border-0', 
-              'p-1', 
-              'flex', 
-              'items-center', 
-              'justify-center', 
-              'w-8', 
-              'h-8', 
-              'text-lg', 
-              'font-bold', 
-              'text-gray-700' 
+              'bg-white',
+              'hover:bg-gray-100',
+              'transition-colors',
+              'duration-200',
+              'border-0',
+              'p-1',
+              'flex',
+              'items-center',
+              'justify-center',
+              'w-8',
+              'h-8',
+              'text-lg',
+              'font-bold',
+              'text-gray-700'
             );
 
-          // 手动添加图标内容（仅缩放按钮）。罗盘按钮保持原生箭头与旋转行为。
-          if (index === 0) {
+            // 手动添加图标内容（仅缩放按钮）。罗盘按钮保持原生箭头与旋转行为。
+            if (index === 0) {
               // 放大按钮
               button.innerHTML = '+';
               button.title = '放大';
@@ -908,7 +956,7 @@ onMounted(async () => {
               // 缩小按钮
               button.innerHTML = '−';
               button.title = '缩小';
-          }
+            }
           });
         }
       }
@@ -921,27 +969,27 @@ onMounted(async () => {
         const drawGroup = drawControl.querySelector('.mapboxgl-ctrl-group');
         if (drawGroup) {
           drawGroup.classList.add(
-            'shadow-lg', 
-            'rounded-lg', 
-            'border', 
-            'border-gray-200', 
-            'bg-white', 
-            'overflow-hidden' 
+            'shadow-lg',
+            'rounded-lg',
+            'border',
+            'border-gray-200',
+            'bg-white',
+            'overflow-hidden'
           );
 
           // 按钮样式
           const buttons = drawGroup.querySelectorAll('button');
           buttons.forEach(button => {
             button.classList.add(
-              'bg-white', 
-              'hover:bg-gray-100', 
-              'transition-colors', 
-              'duration-200', 
-              'border-0', 
-              'p-1', 
-              'flex', 
-              'items-center', 
-              'justify-center' 
+              'bg-white',
+              'hover:bg-gray-100',
+              'transition-colors',
+              'duration-200',
+              'border-0',
+              'p-1',
+              'flex',
+              'items-center',
+              'justify-center'
             );
           });
         }
@@ -962,10 +1010,10 @@ onMounted(async () => {
 
     // 监听地图上的右键事件
     map.on('contextmenu', handleDrawContextMenu);
-    
+
     // 点击地图其他地方关闭右键菜单
     map.on('click', closeDrawContextMenu);
-    
+
     // 捕获阶段拦截容器上的右键按下/抬起，防止 Draw 在右键时改写选择（保留左键多选的结果）
     const containerEl = map.getCanvasContainer();
     if (containerEl) {
@@ -1006,11 +1054,19 @@ onMounted(async () => {
     // 比例尺控件与自动淡出
     addScaleControl(map);
     const disposeScale = bindScaleAutoFade(map);
-    onUnmounted(() => { try { disposeScale(); } catch {} });
+    onUnmounted(() => {
+      try {
+        disposeScale();
+      } catch {}
+    });
 
     // 资源加载错误提示（一次性）
     const disposeError = bindTileErrorOnceTip(map);
-    onUnmounted(() => { try { disposeError(); } catch {} });
+    onUnmounted(() => {
+      try {
+        disposeError();
+      } catch {}
+    });
 
     // 测试API连接
     try {
@@ -1025,13 +1081,13 @@ onMounted(async () => {
       console.log('开始初始化地图数据...');
       const rootData = await initData();
       console.log('API返回的根数据:', rootData);
-      
+
       dataTree.value = rootData.children || [];
       console.log('设置的dataTree:', dataTree.value);
-      
+
       treeData.value = convertToTreeData(dataTree.value);
       console.log('转换的treeData:', treeData.value);
-      
+
       const layerList = extractNodes(dataTree.value);
       console.log('提取的可加载图层列表:', layerList);
 
@@ -1039,7 +1095,128 @@ onMounted(async () => {
       scene.loadFromData(layerList);
       console.log('地图场景初始化完成:', scene);
       console.log('scene中的节点数量:', scene.nodes.length);
-      console.log('scene中的节点列表:', scene.nodes.map(n => ({ id: n.id, name: n.name, type: n.type })));
+      console.log(
+        'scene中的节点列表:',
+        scene.nodes.map(n => ({ id: n.id, name: n.name, type: n.type }))
+      );
+      applyGeoAnalysis();
+      // 从会话中恢复用户勾选的图层可见性（从布局返回后不丢失）
+      try {
+        const savedKeysStr = sessionStorage.getItem('layout_checked_keys') || '[]';
+        const savedKeys = JSON.parse(savedKeysStr) as string[];
+        const savedLayerTreeStr = sessionStorage.getItem('layout_layer_tree') || '[]';
+        const savedLayerTree = JSON.parse(savedLayerTreeStr) as Array<{ key: string; title: string; children?: any[] }>;
+        console.log('从会话中恢复的 savedKeys:', savedKeys);
+        console.log('从会话中恢复的 savedLayerTree:', savedLayerTree);
+        // 先恢复图层管理面板的列表
+        if (Array.isArray(savedLayerTree) && savedLayerTree.length) {
+          layerTreeData.value = savedLayerTree.map(it => ({ title: it.title, key: it.key, children: [] })) as any;
+        }
+        // 若有勾选但面板列表中缺少对应 key，则从 scene 中兜底补上
+        if (Array.isArray(savedKeys) && savedKeys.length) {
+          const existingKeys = new Set((layerTreeData.value || []).map(it => String((it as any)?.key)));
+          const missingIds = savedKeys.filter(id => !existingKeys.has(String(id)));
+          if (missingIds.length && scene) {
+            const extras = missingIds.map(id => {
+              const n = scene?.findNodeById(id) as any;
+              return {
+                key: id,
+                title: n?.name_cn || n?.name || id,
+                children: []
+              };
+            });
+            layerTreeData.value = [...(layerTreeData.value || []), ...extras];
+            console.log('为缺失的勾选图层补充面板节点:', extras);
+          }
+        }
+        if (Array.isArray(savedKeys) && savedKeys.length) {
+          let minZoomNeeded = 0;
+          // 先触发加载
+          savedKeys.forEach(id => {
+            try {
+              console.log('恢复阶段先尝试 loadNode:', id, '是否存在于 scene:', Boolean(scene?.findNodeById(id)));
+              scene?.loadNode(id);
+            } catch {}
+          });
+          // 在地图 idle 后统一设置可见，确保 layer 已挂载
+          const ensureVisible = () => {
+            savedKeys.forEach(id => {
+              try {
+                scene?.openNode(id);
+                const n = scene?.findNodeById(id) as any;
+                if (n && Number.isFinite(n.minZoom)) {
+                  minZoomNeeded = Math.max(minZoomNeeded, n.minZoom || 0);
+                }
+                // 双保险：直接把每个实际存在的样式层设为 visible
+                const node = scene?.findNodeById(id) as any;
+                if (node?.layers?.length) {
+                  node.layers.forEach((ly: any) => {
+                    if (map.getLayer(ly.id)) {
+                      map.setLayoutProperty(ly.id, 'visibility', 'visible');
+                    }
+                  });
+                }
+              } catch {}
+            });
+            // 若当前缩放低于所需最小缩放，抬高到最小可见缩放
+            try {
+              if (minZoomNeeded > 0 && map.getZoom() + 1e-6 < minZoomNeeded) {
+                map.easeTo({ zoom: minZoomNeeded, duration: 0 });
+              }
+            } catch {}
+          };
+          if ((map as any).areTilesLoaded?.()) {
+            // 若已空闲，直接可见
+            ensureVisible();
+          } else {
+            map.once('idle', ensureVisible);
+          }
+          checkedKeys.value = savedKeys;
+
+          // 再次兜底：在地图与样式稳定后，强制加载并显示所有勾选图层
+          setTimeout(() => {
+            try {
+              if (!scene) return;
+              console.log('延迟强制恢复图层可见性:', savedKeys);
+              savedKeys.forEach(id => {
+                try {
+                  const node = scene?.findNodeById(id) as any;
+                  console.log('延迟恢复节点状态:', id, {
+                    exists: Boolean(node),
+                    active: node?.active,
+                    layerCount: node?.layers?.length
+                  });
+                  scene?.loadNode(id);
+                  scene?.openNode(id);
+                  if (node?.layers?.length) {
+                    node.layers.forEach((ly: any) => {
+                      if (map.getLayer(ly.id)) {
+                        map.setLayoutProperty(ly.id, 'visibility', 'visible');
+                      }
+                    });
+                  }
+                } catch (e) {
+                  console.error('延迟恢复图层可见性失败:', id, e);
+                }
+              });
+
+              // 额外兜底：自动缩放到第一个恢复的图层范围，避免因视图范围不合适导致“看起来像没图层”
+              const firstId = savedKeys[0];
+              if (firstId) {
+                try {
+                  // 忽略返回 Promise
+                  // eslint-disable-next-line @typescript-eslint/no-floating-promises
+                  zoomToLayer(scene, map, firstId, '恢复图层');
+                } catch (e) {
+                  console.error('延迟缩放到恢复图层失败:', firstId, e);
+                }
+              }
+            } catch (e) {
+              console.error('延迟恢复图层阶段异常:', e);
+            }
+          }, 500);
+        }
+      } catch {}
     } catch (error) {
       console.error('初始化地图数据失败:', error);
       dataTree.value = [];
@@ -1048,11 +1225,157 @@ onMounted(async () => {
   }
 });
 
+// 持久化勾选状态：任意变更时写入 sessionStorage，跨路由/返回后恢复
+watch(
+  checkedKeys,
+  val => {
+    try {
+      console.log('checkedKeys 持久化 watch 触发，当前值:', val);
+      const keys = Array.isArray(val) ? [...val] : [];
+      sessionStorage.setItem('layout_checked_keys', JSON.stringify(keys));
+    } catch {}
+  },
+  { deep: true }
+);
+
+// 根据勾选状态同步地图中图层的可见性（包含刷新后从会话恢复的情况）
+watch(
+  checkedKeys,
+  (val, oldVal) => {
+    try {
+      if (!scene) return;
+      console.log('checkedKeys 同步地图 watch 触发:', {
+        next: val,
+        prev: oldVal,
+        hasScene: Boolean(scene),
+        sceneNodes: scene?.nodes.map(n => ({ id: n.id, active: n.active, type: n.type }))
+      });
+      const next = new Set((Array.isArray(val) ? val : []).map(id => String(id)));
+      const prev = new Set((Array.isArray(oldVal) ? oldVal : []).map(id => String(id)));
+
+      // 新增勾选：加载并显示
+      next.forEach(id => {
+        if (!prev.has(id)) {
+          try {
+            console.log('根据勾选状态加载图层:', id);
+            scene?.loadNode(id);
+            scene?.openNode(id);
+          } catch (e) {
+            console.error('根据勾选状态加载图层失败:', id, e);
+          }
+        }
+      });
+
+      // 取消勾选：隐藏
+      prev.forEach(id => {
+        if (!next.has(id)) {
+          try {
+            scene?.closeNode(id);
+          } catch (e) {
+            console.error('根据勾选状态关闭图层失败:', id, e);
+          }
+        }
+      });
+    } catch (error) {
+      console.error('根据勾选状态同步图层可见性失败:', error);
+    }
+  },
+  { deep: false }
+);
+
+watch(
+  () => layerTreeData.value,
+  val => {
+    try {
+      const simple = (Array.isArray(val) ? val : []).map((it: any) => ({
+        key: String(it?.key),
+        title: String(it?.title || '')
+      }));
+      sessionStorage.setItem('layout_layer_tree', JSON.stringify(simple));
+    } catch {}
+  },
+  { deep: true }
+);
+
+watch(
+  () => route.query.geoAnalysis,
+  val => {
+    pendingGeoAnalysis.value = typeof val === 'string' ? val : null;
+    applyGeoAnalysis();
+  },
+  { immediate: true }
+);
+
+function applyGeoAnalysis() {
+  const analysisKey = pendingGeoAnalysis.value;
+  if (!analysisKey || !scene) {
+    return;
+  }
+  const config = GEO_ANALYSIS_CONFIG[analysisKey];
+  if (!config) {
+    pendingGeoAnalysis.value = null;
+    return;
+  }
+  const matchesNode = (node: MapNode) => {
+    const nameCn = (node as any).nameCn || '';
+    const tableName = node.name || '';
+    const keywordHit = config.layerNameKeywords?.some(keyword => nameCn.includes(keyword));
+    const tableHit = config.tableNames?.includes(tableName);
+    return Boolean(keywordHit || tableHit);
+  };
+  const candidates = scene.nodes.filter(node => matchesNode(node));
+  if (!candidates.length) {
+    return;
+  }
+  const ensureLayerPanelEntry = (nodeId: string) => {
+    const exists = (layerTreeData.value || []).some(item => String((item as any)?.key) === nodeId);
+    if (exists) return;
+    const node = scene?.findNodeById(nodeId) as any;
+    if (!node) return;
+    const entry = {
+      key: nodeId,
+      title: node.nameCn || node.name || nodeId,
+      isLayer: true,
+      children: []
+    };
+    layerTreeData.value = [entry, ...(layerTreeData.value || [])] as any;
+  };
+  candidates.forEach(node => {
+    try {
+      scene?.loadNode(node.id);
+      scene?.openNode(node.id);
+      if (!checkedKeys.value.includes(node.id)) {
+        checkedKeys.value = [...checkedKeys.value, node.id];
+      }
+      ensureLayerPanelEntry(node.id);
+    } catch (error) {
+      console.warn('激活地理分析图层失败', node.id, error);
+    }
+  });
+  pendingGeoAnalysis.value = null;
+  if (route.query.geoAnalysis) {
+    const newQuery = { ...route.query } as Record<string, any>;
+    delete newQuery.geoAnalysis;
+    router.replace({ path: route.path, query: newQuery });
+  }
+}
+
 // 框选出图：一次性选择范围并跳转到布局页
 const openLayoutViewWithBBox = () => {
   if (!map) return router.push('/layout');
   window.$message?.info('请在地图上拖拽选择出图范围');
-  selectBBox(map, (bounds) => {
+  selectBBox(map, bounds => {
+    // 保存当前已勾选的图层，以便从布局返回后恢复
+    try {
+      const keys = Array.isArray(checkedKeys.value) ? checkedKeys.value : [];
+      sessionStorage.setItem('layout_checked_keys', JSON.stringify(keys));
+    } catch {}
+    // 保存当前视图状态，确保返回后不偏离可见范围
+    try {
+      const c = map.getCenter();
+      const view = { center: [c.lng, c.lat], zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch() };
+      sessionStorage.setItem('layout_view_state', JSON.stringify(view));
+    } catch {}
     // 保存当前地图样式（含当前后端数据图层与可见性）到 sessionStorage
     try {
       const style = map.getStyle();
@@ -1070,21 +1393,19 @@ const openLayoutViewWithBBox = () => {
     router.push(`/layout?${params.toString()}`);
   });
 };
-
-
 </script>
 
 <template>
   <div id="map-container">
     <div id="map-view" ref="mapViewEl" class="absolute inset-0"></div>
-    
+
     <!-- 布局视图按钮 -->
-    <div class="absolute top-4 right-4 z-[100]">
+    <div class="absolute right-4 top-4 z-[100]">
       <ATooltip title="框选范围并打开布局视图" placement="left">
-        <AButton 
-          type="primary" 
+        <AButton
+          type="primary"
           size="large"
-          class="shadow-lg hover:shadow-xl transition-all duration-200"
+          class="shadow-lg transition-all duration-200 hover:shadow-xl"
           @click="openLayoutViewWithBBox"
         >
           <template #icon>
@@ -1131,25 +1452,24 @@ const openLayoutViewWithBBox = () => {
                   <template #title="nodeData">
                     <!-- 图层节点：支持右键菜单 -->
                     <div v-if="nodeData.isLayer" class="relative">
-                      <div 
-                        
+                      <div
                         :title="`右键查看${nodeData.category === 'static' ? '文件' : '图层'}操作：${nodeData.title}`"
-                        @contextmenu.prevent="(e) => handleRightClickMenu(e, nodeData)"
+                        @contextmenu.prevent="e => handleRightClickMenu(e, nodeData)"
                       >
                         <span class="text-white font-medium opacity-100">{{ nodeData.title }}</span>
-                        <IconifyIcon 
-                          v-if="nodeData.category === 'static'" 
-                          icon="material-symbols:description-outline" 
-                          class="ml-1 text-xs text-white opacity-100" 
+                        <IconifyIcon
+                          v-if="nodeData.category === 'static'"
+                          icon="material-symbols:description-outline"
+                          class="ml-1 text-xs text-white opacity-100"
                         />
-                        <IconifyIcon 
-                          v-else 
-                          icon="material-symbols:layers-outline" 
-                          class="ml-1 text-xs text-white opacity-100" 
+                        <IconifyIcon
+                          v-else
+                          icon="material-symbols:layers-outline"
+                          class="ml-1 text-xs text-white opacity-100"
                         />
                       </div>
                     </div>
-                    
+
                     <!-- 目录节点：普通显示 -->
                     <span v-else class="text-white opacity-100">
                       <IconifyIcon icon="material-symbols:folder-outline" class="mr-1 text-white opacity-100" />
@@ -1192,10 +1512,7 @@ const openLayoutViewWithBBox = () => {
                 >
                   <template #title="{ title, key }">
                     <div class="relative">
-                      <div 
-                        @contextmenu.prevent="(e) => handleLayerRightClick(e, key as string, title)"
-                        
-                      >
+                      <div @contextmenu.prevent="e => handleLayerRightClick(e, key as string, title)">
                         <span v-if="key === '0-0-1-0'" style="color: #1890ff">{{ title }}</span>
                         <span v-else>{{ title }}</span>
                       </div>
@@ -1210,10 +1527,7 @@ const openLayoutViewWithBBox = () => {
       </div>
     </ADrawer>
 
-    <div class="absolute">
-      <AButton type="primary" @click="showDrawer">Open</AButton>
-    </div>
-    <div class="absolute right-5 h-4/5 w-1/5" style="top: 10%; z-index: 200;">
+    <div class="absolute right-5 h-4/5 w-1/5" style="top: 10%; z-index: 200">
       <ChatBox
         ref="chatBoxRef"
         @on-load-nodes-by-name="onLoadNodesByName"
@@ -1230,9 +1544,13 @@ const openLayoutViewWithBBox = () => {
       :layer-name="selectedLayerName"
       :map="map"
       :scene="scene"
-      :local-data="selectedLayerId === 'draw_features'
-        ? Array.from(drawFeaturesData.values()).flat()
-        : (selectedLayerId.startsWith('draw_') ? drawFeaturesData.get(selectedLayerId) : undefined)"
+      :local-data="
+        selectedLayerId === 'draw_features'
+          ? Array.from(drawFeaturesData.values()).flat()
+          : selectedLayerId.startsWith('draw_')
+            ? drawFeaturesData.get(selectedLayerId)
+            : undefined
+      "
       :z-index="2000"
       @closed="attributeTableVisible = false"
       @request-focus="() => {}"
@@ -1241,11 +1559,11 @@ const openLayoutViewWithBBox = () => {
     <!-- 绘制要素右键菜单 -->
     <div
       v-if="drawContextMenuVisible"
-      class="fixed bg-white rounded-lg shadow-xl border border-gray-200 z-[3000] min-w-[150px]"
+      class="fixed z-[3000] min-w-[150px] border border-gray-200 rounded-lg bg-white shadow-xl"
       :style="{ left: `${drawContextMenuPosition.x}px`, top: `${drawContextMenuPosition.y}px` }"
     >
       <div
-        class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 text-gray-700"
+        class="flex cursor-pointer items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100"
         @click="handleAddFeatureToLayer"
       >
         <PlusOutlined class="text-gray-600" />
@@ -1256,24 +1574,20 @@ const openLayoutViewWithBBox = () => {
     <!-- 数据目录自定义右键菜单 -->
     <div
       v-if="customContextMenuVisible"
-      class="fixed bg-white rounded-lg shadow-xl border border-gray-200 z-[3000] min-w-[150px]"
+      class="fixed z-[3000] min-w-[150px] border border-gray-200 rounded-lg bg-white shadow-xl"
       :style="{ left: `${customContextMenuPosition.x}px`, top: `${customContextMenuPosition.y}px` }"
       @click.stop
     >
       <div
-        class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 text-gray-700"
+        class="flex cursor-pointer items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100"
         @click="handleDataMenuClick('addToLayer')"
       >
-        <IconifyIcon 
-          v-if="currentContextNode?.category === 'static'" 
-          icon="material-symbols:open-in-new" 
-          class="text-blue-500" 
+        <IconifyIcon
+          v-if="currentContextNode?.category === 'static'"
+          icon="material-symbols:open-in-new"
+          class="text-blue-500"
         />
-        <IconifyIcon 
-          v-else 
-          icon="material-symbols:add-circle-outline" 
-          class="text-blue-500" 
-        />
+        <IconifyIcon v-else icon="material-symbols:add-circle-outline" class="text-blue-500" />
         <span class="text-gray-700">
           {{ currentContextNode?.category === 'static' ? '打开文件' : '添加到图层' }}
         </span>
@@ -1281,37 +1595,32 @@ const openLayoutViewWithBBox = () => {
     </div>
 
     <!-- 点击其他地方隐藏菜单的遮罩 -->
-    <div
-      v-if="customContextMenuVisible"
-      class="fixed inset-0 z-[2999]"
-      @click="hideCustomContextMenu"
-    ></div>
+    <div v-if="customContextMenuVisible" class="fixed inset-0 z-[2999]" @click="hideCustomContextMenu"></div>
 
     <!-- 图层管理自定义右键菜单 -->
     <div
       v-if="layerContextMenuVisible"
-      class="fixed bg-white rounded-lg shadow-xl border border-gray-200 z-[3001] min-w-[150px]"
+      class="fixed z-[3001] min-w-[150px] border border-gray-200 rounded-lg bg-white shadow-xl"
       :style="{ left: `${layerContextMenuPosition.x}px`, top: `${layerContextMenuPosition.y}px` }"
       @click.stop
     >
       <div
-        class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 text-gray-700"
+        class="flex cursor-pointer items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100"
         @click="handleLayerMenuClick('viewAttributes')"
       >
         <TableOutlined class="text-blue-500" />
         <span class="text-gray-700">查看属性表</span>
       </div>
       <div
-        class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 text-gray-700"
+        class="flex cursor-pointer items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100"
         @click="handleLayerMenuClick('zoomToLayer')"
       >
         <ZoomInOutlined class="text-blue-500" />
         <span class="text-gray-700">缩放到图层</span>
       </div>
-      <div class="border-t border-gray-200 my-1"></div>
+      <div class="my-1 border-t border-gray-200"></div>
       <div
-        v-if="isAdmin"
-        class="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-2 text-red-500"
+        class="flex cursor-pointer items-center gap-2 px-4 py-2 text-red-500 hover:bg-gray-100"
         @click="handleLayerMenuClick('removeLayer')"
       >
         <DeleteOutlined class="text-red-500" />
@@ -1320,11 +1629,7 @@ const openLayoutViewWithBBox = () => {
     </div>
 
     <!-- 点击其他地方隐藏图层菜单的遮罩 -->
-    <div
-      v-if="layerContextMenuVisible"
-      class="fixed inset-0 z-[3000]"
-      @click="hideLayerContextMenu"
-    ></div>
+    <div v-if="layerContextMenuVisible" class="fixed inset-0 z-[3000]" @click="hideLayerContextMenu"></div>
 
     <!-- 要素命名对话框 -->
     <AModal
@@ -1337,11 +1642,7 @@ const openLayoutViewWithBBox = () => {
     >
       <div class="py-4">
         <AFormItem label="要素名称" :label-col="{ span: 5 }" :wrapper-col="{ span: 16 }">
-          <AInput
-            v-model:value="featureName"
-            placeholder="请输入要素名称"
-            @keyup.enter="confirmAddFeatureToLayer"
-          />
+          <AInput v-model:value="featureName" placeholder="请输入要素名称" @keyup.enter="confirmAddFeatureToLayer" />
         </AFormItem>
         <div v-if="selectedDrawFeatures.length > 0" class="mt-4 text-gray-600">
           <p>已选中 {{ selectedDrawFeatures.length }} 个要素</p>
@@ -1441,16 +1742,14 @@ body > div[style*="position: fixed"]:not(.attr-win) {
 
 /* 特别针对可能出现在body根级别的搜索下拉列表 */
 body > div:has(.mapbox-search-listbox),
-body > div:has([role="listbox"]),
-body > div:has([data-testid*="suggestion"]) {
+body > div:has([role='listbox']),
+body > div:has([data-testid*='suggestion']) {
   z-index: 1600 !important;
 }
 
-
-
 /* 使用更高的特异性来覆盖内联样式 */
-#map-view div[style*="position: absolute"]:not(.attr-win),
-#map-view div[style*="position: fixed"]:not(.attr-win) {
+#map-view div[style*='position: absolute']:not(.attr-win),
+#map-view div[style*='position: fixed']:not(.attr-win) {
   z-index: 1600 !important;
 }
 
@@ -1476,5 +1775,3 @@ body > div:has([data-testid*="suggestion"]) {
   top: auto !important;
 }
 </style>
-const authStore = useAuthStore();
-const isAdmin = computed(() => authStore.userInfo.roles.includes('ROLE_ADMIN'));

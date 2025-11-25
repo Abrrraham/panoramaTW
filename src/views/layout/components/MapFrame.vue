@@ -1,28 +1,9 @@
-<template>
-  <div
-    class="w-full h-full relative overflow-hidden"
-    :style="{ width: width + 'px', height: height + 'px' }"
-  >
-    <!-- 实时地图容器 -->
-    <div
-      v-show="!snapshotUrl"
-      ref="mapEl"
-      class="w-full h-full"
-    ></div>
-    <!-- 导出用快照覆盖层 -->
-    <img
-      v-if="snapshotUrl"
-      :src="snapshotUrl"
-      alt="map snapshot"
-      class="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
-    />
-  </div>
-</template>
-
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch, nextTick } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import { getAuthorization } from '@/service/request/shared';
+import { mapRequestHead } from '@/service/request';
 
 interface BBox {
   minx: number;
@@ -72,7 +53,21 @@ function initMap() {
     interactive: false,
     preserveDrawingBuffer: true,
     attributionControl: false,
-    logoPosition: 'bottom-right'
+    logoPosition: 'bottom-right',
+    // 确保能够加载需要鉴权的后端图层（与主图一致）
+    transformRequest: (url: string) => {
+      const isBackendRequest = url.startsWith(mapRequestHead) || url.includes('/api/v0/');
+      if (isBackendRequest) {
+        const Authorization = getAuthorization();
+        if (Authorization) {
+          return {
+            url,
+            headers: { Authorization }
+          } as any;
+        }
+      }
+      return { url } as any;
+    }
   });
 
   map.once('load', () => {
@@ -82,10 +77,7 @@ function initMap() {
 
 function fitToBBox() {
   if (!map) return;
-  const bounds = new mapboxgl.LngLatBounds(
-    [props.bbox.minx, props.bbox.miny],
-    [props.bbox.maxx, props.bbox.maxy]
-  );
+  const bounds = new mapboxgl.LngLatBounds([props.bbox.minx, props.bbox.miny], [props.bbox.maxx, props.bbox.maxy]);
   map.fitBounds(bounds, { padding: 20, animate: false });
 }
 
@@ -133,10 +125,18 @@ defineExpose({
 });
 </script>
 
-<style scoped>
-</style>
+<template>
+  <div class="relative h-full w-full overflow-hidden" :style="{ width: width + 'px', height: height + 'px' }">
+    <!-- 实时地图容器 -->
+    <div v-show="!snapshotUrl" ref="mapEl" class="h-full w-full"></div>
+    <!-- 导出用快照覆盖层 -->
+    <img
+      v-if="snapshotUrl"
+      :src="snapshotUrl"
+      alt="map snapshot"
+      class="pointer-events-none absolute inset-0 h-full w-full select-none object-cover"
+    />
+  </div>
+</template>
 
-
-
-
-
+<style scoped></style>

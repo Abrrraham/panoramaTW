@@ -1,5 +1,5 @@
 import mapboxgl from 'mapbox-gl';
-import MapboxDraw from '@mapbox/mapbox-gl-draw';
+import type MapboxDraw from '@mapbox/mapbox-gl-draw';
 
 export function addBoxZoomControls(map: mapboxgl.Map) {
   const boxZoomInBtn = document.createElement('button');
@@ -30,8 +30,24 @@ export function addBoxZoomControls(map: mapboxgl.Map) {
   let isBoxZooming = false;
   let boxZoomType: 'in' | 'out' | null = null;
 
+  // 提前声明，避免 eslint 报「use before define」
+  const exitBoxZoom = () => {
+    isBoxZooming = false;
+    boxZoomType = null;
+    boxZoomInBtn.style.setProperty('background-color', 'white', 'important');
+    boxZoomInBtn.style.setProperty('color', '#374151', 'important');
+    boxZoomOutBtn.style.setProperty('background-color', 'white', 'important');
+    boxZoomOutBtn.style.setProperty('color', '#374151', 'important');
+    map.getCanvasContainer().style.cursor = '';
+    map.dragPan.enable();
+    map.boxZoom.enable();
+  };
+
   const startBoxZoom = (type: 'in' | 'out') => {
-    if (isBoxZooming) { exitBoxZoom(); return; }
+    if (isBoxZooming) {
+      exitBoxZoom();
+      return;
+    }
     isBoxZooming = true;
     boxZoomType = type;
     if (type === 'in') {
@@ -52,7 +68,8 @@ export function addBoxZoomControls(map: mapboxgl.Map) {
     let box: HTMLElement | null = null;
     const onMouseDown = (e: MouseEvent) => {
       if (!isBoxZooming) return;
-      e.preventDefault(); e.stopPropagation();
+      e.preventDefault();
+      e.stopPropagation();
       map.dragPan.disable();
       startPoint = [e.clientX, e.clientY];
       box = document.createElement('div');
@@ -66,10 +83,10 @@ export function addBoxZoomControls(map: mapboxgl.Map) {
         const minY = Math.min(startPoint[1], currentPoint[1]) - rect.top;
         const maxX = Math.max(startPoint[0], currentPoint[0]) - rect.left;
         const maxY = Math.max(startPoint[1], currentPoint[1]) - rect.top;
-        box.style.left = minX + 'px';
-        box.style.top = minY + 'px';
-        box.style.width = (maxX - minX) + 'px';
-        box.style.height = (maxY - minY) + 'px';
+        box.style.left = `${minX}px`;
+        box.style.top = `${minY}px`;
+        box.style.width = `${maxX - minX}px`;
+        box.style.height = `${maxY - minY}px`;
       };
       const onMouseUp = (e3: MouseEvent) => {
         if (!startPoint || !box) return;
@@ -91,7 +108,9 @@ export function addBoxZoomControls(map: mapboxgl.Map) {
           const currentZoom = map.getZoom();
           if (currentBounds) {
             const selectedArea = (ne.lng - sw.lng) * (ne.lat - sw.lat);
-            const currentArea = (currentBounds.getEast() - currentBounds.getWest()) * (currentBounds.getNorth() - currentBounds.getSouth());
+            const currentArea =
+              (currentBounds.getEast() - currentBounds.getWest()) *
+              (currentBounds.getNorth() - currentBounds.getSouth());
             if (selectedArea > 0 && currentArea > 0) {
               const zoomDelta = Math.log2(selectedArea / currentArea);
               const newZoom = Math.max(0, currentZoom + zoomDelta - 1);
@@ -109,17 +128,6 @@ export function addBoxZoomControls(map: mapboxgl.Map) {
       document.addEventListener('mouseup', onMouseUp);
     };
     canvas.addEventListener('mousedown', onMouseDown);
-  };
-
-  const exitBoxZoom = () => {
-    isBoxZooming = false; boxZoomType = null;
-    boxZoomInBtn.style.setProperty('background-color', 'white', 'important');
-    boxZoomInBtn.style.setProperty('color', '#374151', 'important');
-    boxZoomOutBtn.style.setProperty('background-color', 'white', 'important');
-    boxZoomOutBtn.style.setProperty('color', '#374151', 'important');
-    map.getCanvasContainer().style.cursor = '';
-    map.dragPan.enable();
-    map.boxZoom.enable();
   };
 
   boxZoomInBtn.addEventListener('click', () => startBoxZoom('in'));
@@ -186,26 +194,60 @@ export function createHorizontalControlBar(map: mapboxgl.Map, draw: MapboxDraw) 
       if (!originalButton) return;
       button.addEventListener('click', () => {
         (originalButton as HTMLElement).click();
-        let buttonMode = ''; let isDrawingButton = false;
-        if (button.classList.contains('mapbox-gl-draw_point')) { buttonMode = 'draw_point'; isDrawingButton = true; }
-        else if (button.classList.contains('mapbox-gl-draw_line_string') || button.classList.contains('mapbox-gl-draw_line') || (button as any).title?.includes('线') || (button as any).title?.includes('line')) { buttonMode = 'draw_line_string'; isDrawingButton = true; }
-        else if (button.classList.contains('mapbox-gl-draw_polygon')) { buttonMode = 'draw_polygon'; isDrawingButton = true; }
+        let buttonMode = '';
+        let isDrawingButton = false;
+        if (button.classList.contains('mapbox-gl-draw_point')) {
+          buttonMode = 'draw_point';
+          isDrawingButton = true;
+        } else if (
+          button.classList.contains('mapbox-gl-draw_line_string') ||
+          button.classList.contains('mapbox-gl-draw_line') ||
+          (button as any).title?.includes('线') ||
+          (button as any).title?.includes('line')
+        ) {
+          buttonMode = 'draw_line_string';
+          isDrawingButton = true;
+        } else if (button.classList.contains('mapbox-gl-draw_polygon')) {
+          buttonMode = 'draw_polygon';
+          isDrawingButton = true;
+        }
         if (isDrawingButton) {
           if (currentDrawButton === button && currentDrawMode === buttonMode) {
-            currentDrawMode = null; currentDrawButton = null; button.classList.remove('active'); draw.changeMode('simple_select');
+            currentDrawMode = null;
+            currentDrawButton = null;
+            button.classList.remove('active');
+            draw.changeMode('simple_select');
           } else {
-            currentDrawMode = buttonMode; currentDrawButton = button as HTMLElement;
+            currentDrawMode = buttonMode;
+            currentDrawButton = button as HTMLElement;
             buttons.forEach(btn => {
-              if (btn.classList.contains('mapbox-gl-draw_point') || btn.classList.contains('mapbox-gl-draw_line_string') || btn.classList.contains('mapbox-gl-draw_line') || btn.classList.contains('mapbox-gl-draw_polygon') || (btn as any).title?.includes('线') || (btn as any).title?.includes('点') || (btn as any).title?.includes('面')) {
+              if (
+                btn.classList.contains('mapbox-gl-draw_point') ||
+                btn.classList.contains('mapbox-gl-draw_line_string') ||
+                btn.classList.contains('mapbox-gl-draw_line') ||
+                btn.classList.contains('mapbox-gl-draw_polygon') ||
+                (btn as any).title?.includes('线') ||
+                (btn as any).title?.includes('点') ||
+                (btn as any).title?.includes('面')
+              ) {
                 btn.classList.remove('active');
               }
             });
             button.classList.add('active');
           }
         } else if (button.classList.contains('mapbox-gl-draw_trash')) {
-          currentDrawMode = null; currentDrawButton = null;
+          currentDrawMode = null;
+          currentDrawButton = null;
           buttons.forEach(btn => {
-            if (btn.classList.contains('mapbox-gl-draw_point') || btn.classList.contains('mapbox-gl-draw_line_string') || btn.classList.contains('mapbox-gl-draw_line') || btn.classList.contains('mapbox-gl-draw_polygon') || (btn as any).title?.includes('线') || (btn as any).title?.includes('点') || (btn as any).title?.includes('面')) {
+            if (
+              btn.classList.contains('mapbox-gl-draw_point') ||
+              btn.classList.contains('mapbox-gl-draw_line_string') ||
+              btn.classList.contains('mapbox-gl-draw_line') ||
+              btn.classList.contains('mapbox-gl-draw_polygon') ||
+              (btn as any).title?.includes('线') ||
+              (btn as any).title?.includes('点') ||
+              (btn as any).title?.includes('面')
+            ) {
               btn.classList.remove('active');
             }
           });
@@ -215,7 +257,10 @@ export function createHorizontalControlBar(map: mapboxgl.Map, draw: MapboxDraw) 
     map.on('draw.create', () => {
       if (currentDrawMode && currentDrawButton) {
         setTimeout(() => {
-          if (currentDrawMode) { currentDrawButton?.classList.add('active'); draw.changeMode(currentDrawMode as any); }
+          if (currentDrawMode) {
+            currentDrawButton?.classList.add('active');
+            draw.changeMode(currentDrawMode as any);
+          }
         }, 50);
       }
     });
@@ -227,14 +272,30 @@ export function createHorizontalControlBar(map: mapboxgl.Map, draw: MapboxDraw) 
     map.on('draw.modechange', (e: any) => {
       if (e.mode === 'simple_select' && !currentDrawMode) {
         buttons.forEach(btn => {
-          if (btn.classList.contains('mapbox-gl-draw_point') || btn.classList.contains('mapbox-gl-draw_line_string') || btn.classList.contains('mapbox-gl-draw_line') || btn.classList.contains('mapbox-gl-draw_polygon') || (btn as any).title?.includes('线') || (btn as any).title?.includes('点') || (btn as any).title?.includes('面')) {
+          if (
+            btn.classList.contains('mapbox-gl-draw_point') ||
+            btn.classList.contains('mapbox-gl-draw_line_string') ||
+            btn.classList.contains('mapbox-gl-draw_line') ||
+            btn.classList.contains('mapbox-gl-draw_polygon') ||
+            (btn as any).title?.includes('线') ||
+            (btn as any).title?.includes('点') ||
+            (btn as any).title?.includes('面')
+          ) {
             btn.classList.remove('active');
           }
         });
       }
       if (currentDrawMode && currentDrawButton) {
         buttons.forEach(btn => {
-          if (btn.classList.contains('mapbox-gl-draw_point') || btn.classList.contains('mapbox-gl-draw_line_string') || btn.classList.contains('mapbox-gl-draw_line') || btn.classList.contains('mapbox-gl-draw_polygon') || (btn as any).title?.includes('线') || (btn as any).title?.includes('点') || (btn as any).title?.includes('面')) {
+          if (
+            btn.classList.contains('mapbox-gl-draw_point') ||
+            btn.classList.contains('mapbox-gl-draw_line_string') ||
+            btn.classList.contains('mapbox-gl-draw_line') ||
+            btn.classList.contains('mapbox-gl-draw_polygon') ||
+            (btn as any).title?.includes('线') ||
+            (btn as any).title?.includes('点') ||
+            (btn as any).title?.includes('面')
+          ) {
             btn.classList.remove('active');
           }
         });
@@ -247,12 +308,18 @@ export function createHorizontalControlBar(map: mapboxgl.Map, draw: MapboxDraw) 
       }
     }, 100);
     const originalRemove = drawClone.remove;
-    drawClone.remove = function(this: any) { clearInterval(stateChecker); return originalRemove.call(this); };
+    // 命名为 `remove`，同时满足 func-names 与 func-name-matching 规则
+    drawClone.remove = function remove(this: any) {
+      clearInterval(stateChecker);
+      return originalRemove.call(this);
+    };
     controlBar.appendChild(drawClone);
   }
 
   const mapContainer = document.getElementById('map-container');
-  if (mapContainer) { mapContainer.appendChild(controlBar); }
+  if (mapContainer) {
+    mapContainer.appendChild(controlBar);
+  }
 
   const originalDrawControl = document.querySelector('.mapboxgl-ctrl-top-left') as HTMLElement;
   if (originalDrawControl) originalDrawControl.style.display = 'none';
@@ -261,20 +328,48 @@ export function createHorizontalControlBar(map: mapboxgl.Map, draw: MapboxDraw) 
   const compassEl = barCompass.onAdd(map) as HTMLElement;
   compassEl.style.marginLeft = '6px';
   controlBar.appendChild(compassEl);
+
+  // 自定义指南针图标：替换默认圆圈/箭头为指南针玫瑰符号
+  try {
+    const styleId = 'panorama-custom-compass-style';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      // 使用可旋转的背景 SVG，保持与 Mapbox bearing 同步旋转
+      const compassSvg =
+        "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><circle cx='12' cy='12' r='10' stroke='%23d1d5db' stroke-width='1' fill='none'/><path d='M12 4 L15 12 L12 10 L9 12 Z' fill='%23ef4444'/><path d='M12 20 L9 12 L12 14 L15 12 Z' fill='%239ca3af'/></svg>";
+      style.textContent = `
+        /* 去掉默认 compass 图标的遮罩与背景，使用自定义指南针 */
+        .mapboxgl-ctrl-compass .mapboxgl-ctrl-icon {
+          background-color: transparent !important;
+          -webkit-mask-image: none !important;
+          mask-image: none !important;
+          background-image: url("${compassSvg}") !important;
+          background-repeat: no-repeat !important;
+          background-position: center !important;
+          background-size: 22px 22px !important;
+        }
+        /* 统一按钮视觉，弱化外圈矩形感，突出指南针符号 */
+        .mapboxgl-ctrl-group .mapboxgl-ctrl-compass {
+          background: white !important;
+          border: none !important;
+          width: 29px !important;
+          height: 29px !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  } catch {}
 }
 
-/**
- * 启动一次性框选，完成后回调返回 bounds（LngLatBoundsLike）
- */
-export function selectBBox(
-  map: mapboxgl.Map,
-  onComplete: (bounds: mapboxgl.LngLatBoundsLike) => void
-) {
+/** 启动一次性框选，完成后回调返回 bounds（LngLatBoundsLike） */
+export function selectBBox(map: mapboxgl.Map, onComplete: (bounds: mapboxgl.LngLatBoundsLike) => void) {
   const canvas = map.getCanvasContainer();
   let startPoint: [number, number] | null = null;
   let box: HTMLElement | null = null;
   const onMouseDown = (e: MouseEvent) => {
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
     map.dragPan.disable();
     startPoint = [e.clientX, e.clientY];
     box = document.createElement('div');
@@ -287,10 +382,10 @@ export function selectBBox(
       const minY = Math.min(startPoint[1], e2.clientY) - rect.top;
       const maxX = Math.max(startPoint[0], e2.clientX) - rect.left;
       const maxY = Math.max(startPoint[1], e2.clientY) - rect.top;
-      box.style.left = minX + 'px';
-      box.style.top = minY + 'px';
-      box.style.width = (maxX - minX) + 'px';
-      box.style.height = (maxY - minY) + 'px';
+      box.style.left = `${minX}px`;
+      box.style.top = `${minY}px`;
+      box.style.width = `${maxX - minX}px`;
+      box.style.height = `${maxY - minY}px`;
     };
     const onMouseUp = (e3: MouseEvent) => {
       if (!startPoint || !box) return;
@@ -315,5 +410,3 @@ export function selectBBox(
   };
   canvas.addEventListener('mousedown', onMouseDown, { once: true });
 }
-
-
