@@ -169,7 +169,7 @@ const local: App.I18n.Schema = {
     document_naive: 'Naive UI文档',
     document_antd: 'Ant Design Vue文档',
     function: '系统功能',
-    'geo-tools': '地理分析',
+    'function_geo-tools': '地理分析',
     function_request: '请求',
     manage: '系统管理',
     manage_user: '用户管理',

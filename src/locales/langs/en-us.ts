@@ -169,7 +169,7 @@ const local: App.I18n.Schema = {
     document_naive: 'Naive UI Document',
     document_antd: 'Ant Design Vue Document',
     function: 'System Function',
-    'geo-tools': 'Geo Analysis',
+    'function_geo-tools': 'Geo Analysis',
     function_request: 'Request',
     manage: 'System Manage',
     manage_user: 'User Manage',

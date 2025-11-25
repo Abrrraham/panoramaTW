@@ -45,34 +45,28 @@ export const generatedRoutes: GeneratedRoute[] = [
     component: 'layout.base',
     meta: {
       title: 'function',
-      i18nKey: 'route.function',
-      icon: 'icon-park-outline:all-application',
-      order: 6
+      i18nKey: 'route.function'
     },
     children: [
+      {
+        name: 'function_geo-tools',
+        path: '/function/geo-tools',
+        component: 'view.function_geo-tools',
+        meta: {
+          title: 'function_geo-tools',
+          i18nKey: 'route.function_geo-tools'
+        }
+      },
       {
         name: 'function_request',
         path: '/function/request',
         component: 'view.function_request',
         meta: {
           title: 'function_request',
-          i18nKey: 'route.function_request',
-          icon: 'carbon:network-overlay',
-          order: 3
+          i18nKey: 'route.function_request'
         }
       }
     ]
-  },
-  {
-    name: 'geo-tools',
-    path: '/geo-tools',
-    component: 'layout.base$view.geo-tools',
-    meta: {
-      title: 'geo-tools',
-      i18nKey: 'route.geo-tools',
-      icon: 'mdi:earth',
-      order: 7
-    }
   },
   {
     name: 'home',

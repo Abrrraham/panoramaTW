@@ -33,7 +33,7 @@ declare module "@elegant-router/types" {
     "404": "/404";
     "500": "/500";
     "function": "/function";
-    "geo-tools": "/geo-tools";
+    "function_geo-tools": "/function/geo-tools";
     "function_request": "/function/request";
     "home": "/home";
     "iframe-page": "/iframe-page/:url";
@@ -92,7 +92,6 @@ declare module "@elegant-router/types" {
     | "404"
     | "500"
     | "function"
-    | "geo-tools"
     | "home"
     | "iframe-page"
     | "layout"
@@ -122,7 +121,7 @@ declare module "@elegant-router/types" {
     | "500"
     | "iframe-page"
     | "login"
-    | "geo-tools"
+    | "function_geo-tools"
     | "function_request"
     | "home"
     | "layout"

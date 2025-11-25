@@ -13,6 +13,7 @@ import { transformElegantRoutesToVueRoutes } from '../elegant/transform';
  */
 const customRoutes: CustomRoute[] = [
   {
+    // 后台数据管理独立菜单
     name: 'admin-data-manage',
     path: '/admin/data-manage',
     component: 'layout.base$view.admin-data-manage',
@@ -22,6 +23,19 @@ const customRoutes: CustomRoute[] = [
       icon: 'mdi:database-cog',
       roles: ['ROLE_ADMIN'],
       order: 10
+    }
+  },
+  {
+    // 地理分析：作为一级菜单替代「系统功能」
+    name: 'geo-tools',
+    path: '/geo-tools',
+    component: 'layout.base$view.function_geo-tools',
+    meta: {
+      // 这里沿用自动生成的 i18n key，避免与 I18nRouteKey 类型不一致
+      title: 'function_geo-tools',
+      i18nKey: 'route.function_geo-tools',
+      icon: 'mdi:earth',
+      order: 6
     }
   }
 ] as any;

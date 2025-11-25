@@ -179,7 +179,7 @@ const routeMap: RouteMap = {
   "404": "/404",
   "500": "/500",
   "function": "/function",
-  "geo-tools": "/geo-tools",
+  "function_geo-tools": "/function/geo-tools",
   "function_request": "/function/request",
   "home": "/home",
   "iframe-page": "/iframe-page/:url",
