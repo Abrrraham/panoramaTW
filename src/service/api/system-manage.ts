@@ -30,6 +30,29 @@ export function fetchGetUserList(params?: Api.SystemManage.UserSearchParams) {
   });
 }
 
+export function fetchCreateUser(data: any) {
+  return request({
+    url: '/systemManage/user',
+    method: 'post',
+    data
+  });
+}
+
+export function fetchUpdateUser(id: string, data: any) {
+  return request({
+    url: `/systemManage/user/${id}`,
+    method: 'put',
+    data
+  });
+}
+
+export function fetchDeleteUser(id: string | number) {
+  return request({
+    url: `/systemManage/user/${id}`,
+    method: 'delete'
+  });
+}
+
 /** get menu list */
 export function fetchGetMenuList() {
   return request<Api.SystemManage.MenuList>({

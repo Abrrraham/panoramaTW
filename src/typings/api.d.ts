@@ -134,6 +134,10 @@ declare namespace Api {
       userEmail: string;
       /** user role code collection */
       userRoles: string[];
+      /** hashed password (admin only view) */
+      password?: string;
+      /** mongo id */
+      mongoId?: string;
     }>;
 
     /** user search params */

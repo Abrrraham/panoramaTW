@@ -1,13 +1,15 @@
 <script setup lang="tsx">
 import { Button, Popconfirm, Tag } from 'ant-design-vue';
-import { fetchGetUserList } from '@/service/api';
+import { fetchGetUserList, fetchDeleteUser } from '@/service/api';
 import { useTable, useTableOperate, useTableScroll } from '@/hooks/common/table';
 import { $t } from '@/locales';
 import { enableStatusRecord, userGenderRecord } from '@/constants/business';
+import { useAuthStore } from '@/store/modules/auth';
 import UserOperateDrawer from './modules/user-operate-drawer.vue';
 import UserSearch from './modules/user-search.vue';
 
 const { tableWrapperRef, scrollConfig } = useTableScroll();
+const authStore = useAuthStore();
 
 const {
   columns,
@@ -91,6 +93,28 @@ const {
       minWidth: 200
     },
     {
+      key: 'userRoles',
+      dataIndex: 'userRoles',
+      title: '角色',
+      align: 'center',
+      minWidth: 150,
+      customRender: ({ record }) => (record.userRoles || []).join(', ')
+    },
+    {
+      key: 'password',
+      dataIndex: 'password',
+      title: '密码',
+      align: 'center',
+      minWidth: 200,
+      ellipsis: true,
+      customRender: ({ record }) => {
+        if (!record.password) return '-';
+        // 只显示原始明文（若存在），哈希则隐藏
+        const looksHashed = (record.password as string).startsWith('$2');
+        return looksHashed ? '-' : record.password;
+      }
+    },
+    {
       key: 'status',
       dataIndex: 'status',
       title: $t('page.manage.user.userStatus'),
@@ -118,10 +142,14 @@ const {
       width: 130,
       customRender: ({ record }) => (
         <div class="flex-center gap-8px">
-          <Button type="primary" ghost size="small" onClick={() => edit(record.id)}>
+          <Button type="primary" ghost size="small" onClick={() => edit(record.mongoId || record.id)}>
             {$t('common.edit')}
           </Button>
-          <Popconfirm title={$t('common.confirmDelete')} onConfirm={() => handleDelete(record.id)}>
+          <Popconfirm
+            title={$t('common.confirmDelete')}
+            onConfirm={() => handleDelete(record)}
+            okButtonProps={{ disabled: !record.mongoId }}
+          >
             <Button danger size="small">
               {$t('common.delete')}
             </Button>
@@ -143,7 +171,7 @@ const {
   onBatchDeleted,
   onDeleted
   // closeDrawer
-} = useTableOperate(data, getData);
+} = useTableOperate(data, getData, { rowKey: 'mongoId' });
 
 async function handleBatchDelete() {
   // request
@@ -152,14 +180,26 @@ async function handleBatchDelete() {
   onBatchDeleted();
 }
 
-function handleDelete(id: number) {
-  // request
-  console.log(id);
-
-  onDeleted();
+function handleDelete(record: any) {
+  const id = record?.mongoId;
+  if (!id) {
+    window.$message?.error('无有效ID，无法删除');
+    return;
+  }
+  if (record?.userName && record.userName === authStore.userInfo.userName) {
+    window.$message?.error('不能删除自己');
+    return;
+  }
+  fetchDeleteUser(id)
+    .then(() => {
+      onDeleted();
+    })
+    .catch(() => {
+      window.$message?.error($t('common.deleteFailed') || '删除失败');
+    });
 }
 
-function edit(id: number) {
+function edit(id: string | number) {
   handleEdit(id);
 }
 </script>
@@ -191,7 +231,7 @@ function edit(id: number) {
         :row-selection="rowSelection"
         :scroll="scrollConfig"
         :loading="loading"
-        row-key="id"
+        row-key="mongoId"
         :pagination="mobilePagination"
         class="h-full"
       />

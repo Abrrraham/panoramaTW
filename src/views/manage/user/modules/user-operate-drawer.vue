@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useAntdForm, useFormRules } from '@/hooks/common/form';
-import { fetchGetAllRoles } from '@/service/api';
+import { fetchGetAllRoles, fetchCreateUser, fetchUpdateUser } from '@/service/api';
 import { $t } from '@/locales';
 import { enableStatusOptions, userGenderOptions } from '@/constants/business';
 
@@ -45,6 +45,7 @@ type Model = Pick<
 >;
 
 const model = ref(createDefaultModel());
+const password = ref('');
 
 function createDefaultModel(): Model {
   return {
@@ -103,8 +104,30 @@ function closeDrawer() {
 
 async function handleSubmit() {
   await validate();
-  // request
-  window.$message?.success($t('common.updateSuccess'));
+  if (props.operateType === 'add') {
+    await fetchCreateUser({
+      userName: model.value.userName,
+      password: password.value || 'ChangeMe@123',
+      userGender: model.value.userGender,
+      nickName: model.value.nickName,
+      userPhone: model.value.userPhone,
+      userEmail: model.value.userEmail,
+      status: model.value.status,
+      userRoles: model.value.userRoles
+    });
+    window.$message?.success($t('common.addSuccess'));
+  } else if (props.operateType === 'edit' && props.rowData) {
+    await fetchUpdateUser(String(props.rowData.mongoId || props.rowData.id), {
+      password: password.value || undefined,
+      userGender: model.value.userGender,
+      nickName: model.value.nickName,
+      userPhone: model.value.userPhone,
+      userEmail: model.value.userEmail,
+      status: model.value.status,
+      userRoles: model.value.userRoles
+    });
+    window.$message?.success($t('common.updateSuccess'));
+  }
   closeDrawer();
   emit('submitted');
 }
@@ -113,6 +136,7 @@ watch(visible, () => {
   if (visible.value) {
     handleInitModel();
     resetFields();
+    password.value = '';
     getRoleOptions();
   }
 });
@@ -123,6 +147,9 @@ watch(visible, () => {
     <AForm ref="formRef" layout="vertical" :model="model" :rules="rules">
       <AFormItem :label="$t('page.manage.user.userName')" name="userName">
         <AInput v-model:value="model.userName" :placeholder="$t('page.manage.user.form.userName')" />
+      </AFormItem>
+      <AFormItem v-if="operateType === 'add'" :label="$t('form.pwd.required')">
+        <AInputPassword v-model:value="password" allow-clear placeholder="默认 ChangeMe@123" />
       </AFormItem>
       <AFormItem :label="$t('page.manage.user.userGender')" name="userGender">
         <ARadioGroup v-model:value="model.userGender">

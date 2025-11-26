@@ -430,7 +430,7 @@ const local: App.I18n.Schema = {
     required: '不能为空',
     userName: {
       required: '请输入用户名',
-      invalid: '用户名格式不正确'
+      invalid: '用户名格式不正确（1-32位，不能含空格）'
     },
     phone: {
       required: '请输入手机号',

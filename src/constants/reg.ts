@@ -1,4 +1,7 @@
-export const REG_USER_NAME = /^[\u4E00-\u9FA5a-zA-Z0-9_-]{4,16}$/;
+/**
+ * Username: allow any non-space characters, 1-32 length
+ */
+export const REG_USER_NAME = /^[^\s]{1,32}$/;
 
 /** Phone reg */
 export const REG_PHONE =

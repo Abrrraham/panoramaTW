@@ -34,7 +34,13 @@ export const request = createFlatRequest<App.Service.Response, RequestInstanceSt
   {
     async onRequest(config) {
       const Authorization = getAuthorization();
-      Object.assign(config.headers, { Authorization });
+      // 登录/刷新 token 接口不附带旧的 Authorization
+      const isAuthApi =
+        typeof config.url === 'string' &&
+        (config.url.includes('/auth/login') || config.url.includes('/auth/refresh'));
+      if (!isAuthApi && Authorization) {
+        Object.assign(config.headers, { Authorization });
+      }
 
       return config;
     },

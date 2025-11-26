@@ -430,7 +430,7 @@ const local: App.I18n.Schema = {
     required: 'Cannot be empty',
     userName: {
       required: 'Please enter user name',
-      invalid: 'User name format is incorrect'
+      invalid: 'User name format is incorrect (1-32 chars, no spaces)'
     },
     phone: {
       required: 'Please enter phone number',
