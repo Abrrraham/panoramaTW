@@ -1,8 +1,6 @@
 import { fetchGetLayerTree } from '@/service/api';
 
-/**
- * 将后端返回的节点属性替换为前端使用的字段
- */
+/** 将后端返回的节点属性替换为前端使用的字段 */
 function replaceProperties(node: Map.BaseTreeNode): Map.LayerData {
   const { layerName, tableName, ...rest } = node as any;
   return {
@@ -13,15 +11,13 @@ function replaceProperties(node: Map.BaseTreeNode): Map.LayerData {
   } as Map.LayerData;
 }
 
-/**
- * 初始化图层树数据
- */
+/** 初始化图层树数据 */
 export async function initData(): Promise<Map.LayerData> {
   try {
     const data = await fetchGetLayerTree();
     return replaceProperties(data as any);
   } catch (error) {
-    console.error('获取图层树数据失败:', error);
+    console.error('获取图层树数据失败', error);
     return {
       id: 'root',
       name: 'root',
@@ -33,14 +29,14 @@ export async function initData(): Promise<Map.LayerData> {
   }
 }
 
-/**
- * 提取树中每个可作为图层的节点（包含叶子与带子节点但有 usage 的节点）
- */
+/** 提取树中每个可作为图层的节点（包含叶子与带子节点但有 usage 的节点） */
 export function extractNodes(tree: Map.LayerData[]): Map.LayerData[] {
   const result: Map.LayerData[] = [];
 
   function traverse(node: Map.LayerData) {
-    if ((node as any).usage !== null) {
+    const usage = (node as any).usage;
+    const status = String(usage?.status || 'READY').toUpperCase();
+    if (usage !== null && status === 'READY') {
       result.push({ ...(node as any) });
     }
     if ((node as any).children && (node as any).children.length > 0) {
@@ -52,18 +48,20 @@ export function extractNodes(tree: Map.LayerData[]): Map.LayerData[] {
   return result;
 }
 
-/**
- * 转换为 Antd Tree 需要的数据结构
- */
-export function convertToTreeData(layers: Map.LayerData[]): import('ant-design-vue').TreeProps['treeData'] {
+/** 转换为 Antd Tree 需要的数据结构 */
+export function convertToTreeData(
+  layers: Map.LayerData[],
+  parentId: string = ''
+): import('ant-design-vue').TreeProps['treeData'] {
   return layers.map((layer: any) => ({
     key: layer.id,
     title: layer.name_cn,
-    children: layer.children ? convertToTreeData(layer.children) : undefined,
+    children: layer.children ? convertToTreeData(layer.children, layer.id) : undefined,
     isLayer: layer.usage !== null,
-    category: layer.category
+    category: layer.category,
+    usage: layer.usage,
+    tableName: layer.name,
+    layerName: layer.name_cn,
+    parentId
   })) as any;
 }
-
-
-

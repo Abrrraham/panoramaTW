@@ -1,5 +1,5 @@
 import { BACKEND_ERROR_CODE, createFlatRequest, createRequest } from '@sa/axios';
-import type { AxiosResponse } from 'axios';
+import type { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { $t } from '@/locales';
 import { useAuthStore } from '@/store/modules/auth';
 import { getServiceBaseURL } from '@/utils/service';
@@ -24,6 +24,19 @@ console.log('otherBaseURL.data:', otherBaseURL.data);
 // const defyAPI = 'app-lwFX37V0X4snwoV1SwLIVpXV';
 const defyAPI = 'app-lFEpKbIBGMORGOL3Rc5U3x6k'; // 东盟
 
+function applyAuthorizationHeader(config: InternalAxiosRequestConfig, authorization: string | null) {
+  if (!authorization) {
+    return;
+  }
+  const headers: any = config.headers ?? {};
+  if (typeof headers.set === 'function') {
+    headers.set('Authorization', authorization);
+  } else {
+    headers.Authorization = authorization;
+  }
+  config.headers = headers;
+}
+
 export const request = createFlatRequest<App.Service.Response, RequestInstanceState>(
   {
     baseURL,
@@ -36,10 +49,9 @@ export const request = createFlatRequest<App.Service.Response, RequestInstanceSt
       const Authorization = getAuthorization();
       // 登录/刷新 token 接口不附带旧的 Authorization
       const isAuthApi =
-        typeof config.url === 'string' &&
-        (config.url.includes('/auth/login') || config.url.includes('/auth/refresh'));
-      if (!isAuthApi && Authorization) {
-        Object.assign(config.headers, { Authorization });
+        typeof config.url === 'string' && (config.url.includes('/auth/login') || config.url.includes('/auth/refresh'));
+      if (!isAuthApi) {
+        applyAuthorizationHeader(config, Authorization);
       }
 
       return config;
@@ -102,7 +114,7 @@ export const request = createFlatRequest<App.Service.Response, RequestInstanceSt
         const success = await handleExpiredRequest(request.state);
         if (success) {
           const Authorization = getAuthorization();
-          Object.assign(response.config.headers, { Authorization });
+          applyAuthorizationHeader(response.config, Authorization);
 
           return instance.request(response.config) as Promise<AxiosResponse>;
         }
@@ -148,9 +160,8 @@ export const demoRequest = createRequest<App.Service.DemoResponse>(
   },
   {
     async onRequest(config) {
-      const { headers } = config;
       const Authorization = getAuthorization();
-      if (Authorization) Object.assign(headers, { Authorization });
+      applyAuthorizationHeader(config, Authorization);
 
       return config;
     },
@@ -187,9 +198,8 @@ export const dataRequest = createRequest<App.Service.DemoResponse>(
   },
   {
     async onRequest(config) {
-      const { headers } = config;
       const Authorization = getAuthorization();
-      if (Authorization) Object.assign(headers, { Authorization });
+      applyAuthorizationHeader(config, Authorization);
 
       return config;
     },
@@ -226,6 +236,11 @@ export const dataRequestFlat = createFlatRequest<App.Service.Response, RequestIn
     timeout: 30000
   },
   {
+    async onRequest(config) {
+      const Authorization = getAuthorization();
+      applyAuthorizationHeader(config, Authorization);
+      return config;
+    },
     isBackendSuccess(response) {
       return response.status === 200;
     },

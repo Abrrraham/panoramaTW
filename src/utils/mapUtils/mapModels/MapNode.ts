@@ -36,6 +36,7 @@ export default class MapNode {
   tileSize: number = 256;
   isDemSource: boolean = false;
   active: boolean = false;
+  loading: boolean = false;
   geojsonData: Feature | null = null;
 
   static createFromData(data: Map.LayerData, _scene: MapScene): MapNode {
@@ -213,7 +214,19 @@ export default class MapNode {
   }
 
   loadAll() {
-    // 直接尝试加载图层；若样式尚未完全就绪，由下方 try/catch 兜底避免报错
+    const map = this.map;
+    if (map && !map.isStyleLoaded()) {
+      if (!this.loading) {
+        this.loading = true;
+        map.once('load', () => {
+          this.loading = false;
+          this.loadAll();
+        });
+      }
+      return;
+    }
+
+    // 直接尝试加载图层；样式未就绪时已在上方兜底等待
     this.active = true;
     console.log(`加载图层节点: ${this.id}, 类型: ${this.type}, 数据源: ${this.source}`);
 

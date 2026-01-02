@@ -1,6 +1,6 @@
 <script setup lang="tsx">
 import { Button, Popconfirm, Tag } from 'ant-design-vue';
-import { fetchGetUserList, fetchDeleteUser } from '@/service/api';
+import { fetchDeleteUser, fetchGetUserList } from '@/service/api';
 import { useTable, useTableOperate, useTableScroll } from '@/hooks/common/table';
 import { $t } from '@/locales';
 import { enableStatusRecord, userGenderRecord } from '@/constants/business';
@@ -142,7 +142,7 @@ const {
       width: 130,
       customRender: ({ record }) => (
         <div class="flex-center gap-8px">
-          <Button type="primary" ghost size="small" onClick={() => edit(record.mongoId || record.id)}>
+          <Button type="primary" ghost size="small" onClick={() => edit(record.id)}>
             {$t('common.edit')}
           </Button>
           <Popconfirm
@@ -171,7 +171,7 @@ const {
   onBatchDeleted,
   onDeleted
   // closeDrawer
-} = useTableOperate(data, getData, { rowKey: 'mongoId' });
+} = useTableOperate(data, getData);
 
 async function handleBatchDelete() {
   // request
@@ -195,11 +195,11 @@ function handleDelete(record: any) {
       onDeleted();
     })
     .catch(() => {
-      window.$message?.error($t('common.deleteFailed') || '删除失败');
+      window.$message?.error('删除失败');
     });
 }
 
-function edit(id: string | number) {
+function edit(id: number) {
   handleEdit(id);
 }
 </script>

@@ -179,7 +179,8 @@ const local: App.I18n.Schema = {
     exception: '异常页',
     exception_403: '403',
     exception_404: '404',
-    exception_500: '500'
+    exception_500: '500',
+    'manage_data-manage': '数据管理'
   },
   page: {
     login: {

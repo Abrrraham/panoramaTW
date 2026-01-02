@@ -10,6 +10,14 @@ export function createVectorLayer(data: FormData) {
   });
 }
 
+export function createVectorLayerShp(data: FormData) {
+  return dataRequest<AdminResult>({
+    url: '/admin/vector/layer/shp',
+    method: 'post',
+    data
+  });
+}
+
 export function deleteVectorLayer(id: string) {
   return dataRequest<AdminResult>({
     url: `/admin/vector/layer/${id}`,

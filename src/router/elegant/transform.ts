@@ -187,6 +187,7 @@ const routeMap: RouteMap = {
   "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?",
   "main": "/main",
   "manage": "/manage",
+  "manage_data-manage": "/manage/data-manage",
   "manage_menu": "/manage/menu",
   "manage_role": "/manage/role",
   "manage_user": "/manage/user",

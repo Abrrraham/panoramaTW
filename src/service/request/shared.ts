@@ -5,9 +5,14 @@ import type { RequestInstanceState } from './type';
 
 export function getAuthorization() {
   const token = localStg.get('token');
-  // 仅当 token 为看起来像 JWT（三个段，用点分隔）时才附带
-  const isJwt = typeof token === 'string' && token.split('.').length === 3;
-  return isJwt ? `Bearer ${token}` : null;
+  if (typeof token !== 'string') {
+    return null;
+  }
+  const trimmed = token.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.startsWith('Bearer ') ? trimmed : `Bearer ${trimmed}`;
 }
 
 /** refresh token */

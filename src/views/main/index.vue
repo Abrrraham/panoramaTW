@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /* eslint-disable @typescript-eslint/no-use-before-define, no-plusplus, no-lonely-if, complexity, max-depth, consistent-return, @typescript-eslint/no-unused-vars */
-import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import mapboxgl from 'mapbox-gl';
 import { SimpleScrollbar } from '@sa/materials';
@@ -21,7 +21,7 @@ import { addScaleControl, bindScaleAutoFade } from '@/utils/mapUtils/scaleContro
 import { ensureMapContainerSize } from '@/utils/mapUtils/layout';
 import { bindTileErrorOnceTip } from '@/utils/mapUtils/errorHandler';
 import MapScene from '@/utils/mapUtils/mapModels/MapScene';
-import type MapNode from '@/utils/mapUtils/mapModels/MapNode';
+import MapNode from '@/utils/mapUtils/mapModels/MapNode';
 import { convertToTreeData, extractNodes, initData } from '@/utils/mapUtils/layerData';
 import { addBoxZoomControls, createHorizontalControlBar, selectBBox } from '@/utils/mapUtils/controls';
 import { zoomToLayer } from '@/utils/mapUtils/zoomToLayer';
@@ -52,6 +52,20 @@ const chatBoxRef = ref<ChatBoxExpose | null>(null);
 const dataTree = ref<Map.LayerData[]>([]);
 const treeData = ref<TreeProps['treeData']>([]);
 const layerTreeData = ref<TreeProps['treeData']>([]);
+
+const resizeMapView = () => {
+  if (!map) return;
+  const host = document.getElementById('map-container') as HTMLElement | null;
+  const view = document.getElementById('map-view') as HTMLElement | null;
+  if (!host || !view) return;
+  const top = host.getBoundingClientRect().top;
+  const height = Math.max(300, window.innerHeight - top);
+  host.style.height = `${height}px`;
+  view.style.height = `${height}px`;
+  view.style.width = '100%';
+  map.resize();
+  map.triggerRepaint?.();
+};
 
 const expandedKeys = ref<string[]>([]);
 const checkedKeys = ref<string[]>([]);
@@ -206,6 +220,10 @@ const onContextMenuClick = (id: string, title: string) => {
 
   const nodeData = findNodeInTree(dataTree.value, id);
   console.log(`找到节点数据:`, nodeData);
+  if (!nodeData) {
+    window.$message?.warning('未找到图层数据');
+    return;
+  }
 
   // 如果是 static 类型的资源，直接打开文件而不是作为图层
   if (nodeData?.category === 'static') {
@@ -215,10 +233,24 @@ const onContextMenuClick = (id: string, title: string) => {
     return;
   }
 
+  const status = String((nodeData as any)?.usage?.status || '').toUpperCase();
+  if (status && status !== 'READY') {
+    window.$message?.warning(`图层当前状态为 ${status}，暂不可加载`);
+    return;
+  }
+
   // 检查scene是否已初始化
   if (!scene) {
     console.error('MapScene未初始化');
     window.$message?.error('地图场景未初始化，请稍后再试');
+    return;
+  }
+  if (map && !map.isStyleLoaded()) {
+    map.once('load', () => {
+      scene?.loadNode(id);
+      scene?.openNode(id);
+    });
+    window.$message?.info('地图样式加载中，请稍后重试');
     return;
   }
 
@@ -233,8 +265,17 @@ const onContextMenuClick = (id: string, title: string) => {
     return;
   }
 
-  // 检查节点是否存在于scene中
-  const existingNode = scene.findNodeById(id);
+  // 检查节点是否存在于scene中，若不存在则按需创建
+  let existingNode = scene.findNodeById(id);
+  if (!existingNode && nodeData) {
+    try {
+      const createdNode = MapNode.createFromData(nodeData as any, scene);
+      scene.addNode(createdNode);
+      existingNode = createdNode;
+    } catch (error) {
+      console.error('创建图层节点失败:', error);
+    }
+  }
   console.log(`在scene中查找节点 ${id}:`, existingNode);
 
   // 加载图层节点
@@ -247,6 +288,7 @@ const onContextMenuClick = (id: string, title: string) => {
     layerTreeData.value = [{ title, key: id, children: [] }, ...(layerTreeData.value || [])];
     // 设置为勾选状态
     checkedKeys.value.push(id);
+    scene.openNode(id);
     window.$message?.success(`已添加图层: ${title}`);
   } else {
     console.log(`图层 ${id} 加载失败或已经加载过`);
@@ -813,6 +855,7 @@ onMounted(async () => {
         disposeLayout();
       } catch {}
     });
+    resizeMapView();
 
     // 搜索控件
     setupSearchControl(map);
@@ -1131,14 +1174,14 @@ onMounted(async () => {
         }
         if (Array.isArray(savedKeys) && savedKeys.length) {
           let minZoomNeeded = 0;
-          // 先触发加载
-          savedKeys.forEach(id => {
-            try {
-              console.log('恢复阶段先尝试 loadNode:', id, '是否存在于 scene:', Boolean(scene?.findNodeById(id)));
-              scene?.loadNode(id);
-            } catch {}
-          });
-          // 在地图 idle 后统一设置可见，确保 layer 已挂载
+          const loadSavedNodes = () => {
+            savedKeys.forEach(id => {
+              try {
+                console.log('恢复阶段先尝试 loadNode:', id, '是否存在于 scene:', Boolean(scene?.findNodeById(id)));
+                scene?.loadNode(id);
+              } catch {}
+            });
+          };
           const ensureVisible = () => {
             savedKeys.forEach(id => {
               try {
@@ -1165,6 +1208,14 @@ onMounted(async () => {
               }
             } catch {}
           };
+          if (map && !map.isStyleLoaded()) {
+            map.once('load', () => {
+              loadSavedNodes();
+              map.once('idle', ensureVisible);
+            });
+            return;
+          }
+          loadSavedNodes();
           if ((map as any).areTilesLoaded?.()) {
             // 若已空闲，直接可见
             ensureVisible();
@@ -1369,6 +1420,22 @@ const openLayoutViewWithBBox = () => {
     try {
       const keys = Array.isArray(checkedKeys.value) ? checkedKeys.value : [];
       sessionStorage.setItem('layout_checked_keys', JSON.stringify(keys));
+
+      // 根据勾选的 key 收集标题，供布局视图显示图例
+      const findTitleByKey = (nodes: any[], key: string): string | null => {
+        for (const n of nodes) {
+          if (String(n.key) === String(key)) return n.title || n.name_cn || n.name || String(key);
+          if (n.children?.length) {
+            const found = findTitleByKey(n.children, key);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      const selectedLayers = keys
+        .map(k => ({ key: String(k), title: findTitleByKey(treeData.value as any[], String(k)) || String(k) }))
+        .filter(it => Boolean(it.title));
+      sessionStorage.setItem('layout_layer_tree', JSON.stringify(selectedLayers));
     } catch {}
     // 保存当前视图状态，确保返回后不偏离可见范围
     try {
@@ -1393,6 +1460,15 @@ const openLayoutViewWithBBox = () => {
     router.push(`/layout?${params.toString()}`);
   });
 };
+onActivated(async () => {
+  await nextTick();
+  if (!map) return;
+  if (map.isStyleLoaded()) {
+    resizeMapView();
+  } else {
+    map.once('load', () => resizeMapView());
+  }
+});
 </script>
 
 <template>

@@ -139,6 +139,15 @@ export const generatedRoutes: GeneratedRoute[] = [
     },
     children: [
       {
+        name: 'manage_data-manage',
+        path: '/manage/data-manage',
+        component: 'view.manage_data-manage',
+        meta: {
+          title: 'manage_data-manage',
+          i18nKey: 'route.manage_data-manage'
+        }
+      },
+      {
         name: 'manage_menu',
         path: '/manage/menu',
         component: 'view.manage_menu',
