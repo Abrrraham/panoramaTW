@@ -42,56 +42,119 @@ const tools: ToolCard[] = [
     icon: 'mdi:terrain',
     description: '利用数字高程模型评估地势起伏、坡度、山河分布，以及气候类型与天气风险。',
     tags: ['DEM', '气候', '坡度'],
-    actions: [{ label: '功能开发中', type: 'emit', value: 'comingSoon' }]
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'terrainClimate' }]
   },
   {
     title: '交通与通行条件',
     icon: 'mdi:road-variant',
     description: '分析道路/铁路/航空枢纽可达性、通达时间、交通瓶颈与口岸情况。',
     tags: ['交通网络', '可达性'],
-    actions: [{ label: '功能开发中', type: 'emit', value: 'comingSoon' }]
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'transport' }]
   },
   {
     title: '资源与产业分布',
     icon: 'mdi:factory',
     description: '展示能源资源、农业产区、工业园区、港口产业带的空间分布与发展重点。',
     tags: ['能源', '产业布局'],
-    actions: [{ label: '功能开发中', type: 'emit', value: 'comingSoon' }]
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'resourceIndustry' }]
   },
   {
     title: '城市发展与土地利用',
     icon: 'mdi:city',
     description: '通过遥感影像和土地利用分类了解城市扩张、绿地比例、建设强度。',
     tags: ['土地利用', '遥感'],
-    actions: [{ label: '功能开发中', type: 'emit', value: 'comingSoon' }]
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'urbanLandUse' }]
   },
   {
     title: '安全与风险评估',
     icon: 'mdi:shield-cross',
     description: '整合地震、洪水、滑坡等自然灾害高风险区及社会事件信息，形成风险视图。',
     tags: ['灾害风险', '安全监测'],
-    actions: [{ label: '功能开发中', type: 'emit', value: 'comingSoon' }]
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'securityRisk' }]
   },
   {
     title: '人口与社会指标',
     icon: 'mdi:account-group',
     description: '展示族群、语言、宗教分布与教育、医疗设施密度，掌握社会结构与敏感点。',
     tags: ['人口', '社会指标'],
-    actions: [{ label: '功能开发中', type: 'emit', value: 'comingSoon' }]
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'populationSocial' }]
   },
   {
     title: '对外关系与边境态势',
     icon: 'mdi:border-none-variant',
     description: '关注边境接壤国、通道与争议区域，以及跨境合作项目与经贸联系。',
     tags: ['边境', '对外关系'],
-    actions: [{ label: '功能开发中', type: 'emit', value: 'comingSoon' }]
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'borderRelations' }]
   },
   {
     title: '实时 / 动态信息',
     icon: 'mdi:radar',
     description: '结合新闻、社交媒体或传感器数据，进行热点监测与舆情预警。',
     tags: ['舆情', '动态监测'],
-    actions: [{ label: '功能开发中', type: 'emit', value: 'comingSoon' }]
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'realtimeInfo' }]
+  },
+  {
+    title: '关键设施定位',
+    icon: 'mdi:map-marker-multiple',
+    description: '定位中国使领馆、重要政府机构、医疗设施、国际组织等关键设施位置，便于访问规划与应急响应。',
+    tags: ['使馆', '领事馆', '医院', '重要机构'],
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'keyFacilities' }]
+  },
+  {
+    title: '经济合作项目分布',
+    icon: 'mdi:handshake',
+    description: '展示一带一路项目、中资企业投资、重大合作项目的空间分布与投资规模，了解经济合作重点区域。',
+    tags: ['一带一路', '投资项目', '中资企业', '合作项目'],
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'economicProjects' }]
+  },
+  {
+    title: '访问区域重点分析',
+    icon: 'mdi:map-search',
+    description: '针对访问城市和重点区域进行深度分析，包括人口密度、经济活动、文化背景等综合信息。',
+    tags: ['访问城市', '重点区域', '热点', '活动区域'],
+    actions: [{ label: '在综合信息查看', type: 'route', value: '/main', extra: 'visitAreas' }]
+  },
+  {
+    title: '缓冲区分析',
+    icon: 'mdi:circle-expand',
+    description: '在关键设施、重要区域周围创建缓冲区，分析影响范围和服务覆盖区域，用于安全规划和应急响应。',
+    tags: ['缓冲区', '影响范围', '服务范围'],
+    actions: [{ label: '在地图上使用', type: 'route', value: '/main', extra: 'bufferAnalysis' }]
+  },
+  {
+    title: '距离测量',
+    icon: 'mdi:ruler',
+    description: '测量两点间距离、点到线距离、区域间最短距离等，用于访问路线规划和距离评估。',
+    tags: ['距离', '测量', '路线'],
+    actions: [{ label: '在地图上使用', type: 'route', value: '/main', extra: 'distanceMeasure' }]
+  },
+  {
+    title: '最近邻分析',
+    icon: 'mdi:near-me',
+    description: '查找指定位置最近的设施、边界、关键点等，快速定位最近的使馆、医院、机场等重要设施。',
+    tags: ['最近邻', '查找', '定位'],
+    actions: [{ label: '在地图上使用', type: 'route', value: '/main', extra: 'nearestNeighbor' }]
+  },
+  {
+    title: '叠加分析',
+    icon: 'mdi:layers-triple',
+    description: '对多个图层进行叠加分析，包括交集、并集、差集等操作，识别重叠区域和共同特征。',
+    tags: ['叠加', '交集', '并集'],
+    actions: [{ label: '在地图上使用', type: 'route', value: '/main', extra: 'overlayAnalysis' }]
+  },
+  {
+    title: '密度分析',
+    icon: 'mdi:chart-scatter-plot',
+    description: '计算点要素的密度分布，分析人口密度、设施密度、热点区域等，识别高密度聚集区。',
+    tags: ['密度', '热点', '聚集'],
+    actions: [{ label: '在地图上使用', type: 'route', value: '/main', extra: 'densityAnalysis' }]
+  },
+  {
+    title: '外交访问路线规划',
+    icon: 'mdi:route',
+    description: '规划访问路线，显示访问城市、路线和备选路线，评估安全路线并估算各路线预计时间，避开高风险区域。',
+    tags: ['访问路线', '外交', '行程规划', '安全路线'],
+    actions: [{ label: '在地图上使用', type: 'route', value: '/main', extra: 'routePlanning' }]
   }
 ];
 
