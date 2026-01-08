@@ -181,6 +181,41 @@ export function createHorizontalControlBar(map: mapboxgl.Map, draw: MapboxDraw) 
     controlBar.appendChild(divider2);
   }
 
+  // 添加路径规划按钮
+  const routePlanningGroup = document.createElement('div');
+  routePlanningGroup.className = 'mapboxgl-ctrl-group';
+  routePlanningGroup.style.cssText = `display:flex;border-radius:6px;overflow:hidden;margin:0;`;
+  
+  const routePlanningBtn = document.createElement('button');
+  routePlanningBtn.className = 'route-planning-btn';
+  routePlanningBtn.title = '路径规划';
+  routePlanningBtn.innerHTML = '🗺️';
+  routePlanningBtn.style.cssText = `background:white;border:none;width:29px;height:29px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;`;
+  routePlanningBtn.addEventListener('click', () => {
+    const enableFn = (window as any).enableRoutePlanning;
+    const disableFn = (window as any).disableRoutePlanning;
+    const modeRef = (window as any).routePlanningMode;
+    
+    if (enableFn && disableFn && modeRef) {
+      if (modeRef.value) {
+        disableFn();
+        routePlanningBtn.style.backgroundColor = 'white';
+        routePlanningBtn.style.color = '';
+      } else {
+        enableFn();
+        routePlanningBtn.style.backgroundColor = '#1890ff';
+        routePlanningBtn.style.color = 'white';
+      }
+    }
+  });
+  
+  routePlanningGroup.appendChild(routePlanningBtn);
+  controlBar.appendChild(routePlanningGroup);
+  
+  const divider3 = document.createElement('div');
+  divider3.style.cssText = divider1.style.cssText;
+  controlBar.appendChild(divider3);
+
   const drawControl = document.querySelector('.mapboxgl-ctrl-top-left .mapboxgl-ctrl-group');
   if (drawControl) {
     const drawClone = drawControl.cloneNode(true) as HTMLElement;

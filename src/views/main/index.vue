@@ -27,6 +27,8 @@ import { addBoxZoomControls, createHorizontalControlBar, selectBBox } from '@/ut
 import { zoomToLayer } from '@/utils/mapUtils/zoomToLayer';
 import AttributeTableWindow from '@/components/common/AttributeTableWindow.vue';
 import { explodeFeatureToPartFeatures } from '@/utils/mapUtils/featureUtils';
+import { planRouteOnRoadNetwork, addCalculationResultToMap } from '@/utils/mapUtils/geoCalculations';
+import * as turf from '@turf/turf';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { getAuthorization } from '@/service/request/shared';
 import { mapRequestHead } from '@/service/request';
@@ -117,9 +119,6 @@ const GEO_ANALYSIS_CONFIG: Record<string, GeoAnalysisConfig> = {
   bufferAnalysis: {
     layerNameKeywords: ['缓冲区', '影响范围', '服务范围']
   },
-  distanceMeasure: {
-    layerNameKeywords: ['距离', '测量', '路线']
-  },
   nearestNeighbor: {
     layerNameKeywords: ['最近邻', '查找', '定位']
   },
@@ -171,6 +170,54 @@ const drawFeaturesData = ref<Map<string, any[]>>(new Map());
 const suppressSelectionOnContext = ref(false);
 // 最近一次稳定的选择快照（仅在非右键情形下更新）
 const lastStableSelected = ref<Feature[]>([]);
+
+// 路径规划相关状态
+const routePlanningMode = ref(false);
+const routeStartPoint = ref<Feature | null>(null);
+const routeEndPoint = ref<Feature | null>(null);
+const plannedRoute = ref<Feature | null>(null);
+const routeResultLayerId = ref<string | null>(null);
+const routeStartMarker = ref<mapboxgl.Marker | null>(null);
+const routeEndMarker = ref<mapboxgl.Marker | null>(null);
+
+// 图层选择对话框状态
+const layerSelectionModalVisible = ref(false);
+const currentAnalysisType = ref<string | null>(null);
+const availableLayers = ref<Array<{ id: string; name: string; type: number }>>([]);
+const selectedLayerForAnalysis = ref<string[]>([]);
+
+// 最近邻分析的特殊状态
+const nearestNeighborTargetLayerId = ref<string>('');
+const nearestNeighborTargetFeature = ref<Feature | null>(null);
+const nearestNeighborTargetFeatureLayerId = ref<string>('');
+const nearestNeighborSelectTargetFeatureMode = ref(false); // 是否处于选择目标要素模式
+
+// 分析参数配置
+const analysisParams = ref<{
+  // 缓冲区分析参数
+  bufferDistance?: number;
+  bufferUnit?: 'meters' | 'kilometers';
+  // 最近邻分析参数
+  nearestSearchRadius?: number;
+  nearestUnit?: 'meters' | 'kilometers';
+  nearestMaxResults?: number;
+  // 叠加分析参数
+  overlayOperation?: 'intersect' | 'union' | 'difference';
+  // 密度分析参数
+  densitySearchRadius?: number;
+  densityUnit?: 'meters' | 'kilometers';
+  densityGridSize?: number;
+}>({
+  bufferDistance: 0.5, // 默认0.5千米
+  bufferUnit: 'kilometers',
+  nearestSearchRadius: 1, // 默认1千米
+  nearestUnit: 'kilometers',
+  nearestMaxResults: 1,
+  overlayOperation: 'intersect',
+  densitySearchRadius: 1, // 默认1千米
+  densityUnit: 'kilometers',
+  densityGridSize: 100
+});
 
 // 处理右键菜单显示
 const handleRightClickMenu = (event: MouseEvent, nodeData: any) => {
@@ -247,6 +294,88 @@ const handleLayerMenuClick = (menuKey: string) => {
 const hideLayerContextMenu = () => {
   layerContextMenuVisible.value = false;
   currentContextLayer.value = null;
+};
+
+// 获取图层显示信息（统一处理图层名称、类型等）
+const getLayerDisplayInfo = (nodeId: string) => {
+  const node = scene?.findNodeById(nodeId) as any;
+  if (!node) {
+    return {
+      title: nodeId,
+      type: 6, // CUSTOM
+      typeName: '其他',
+      icon: 'material-symbols:layers-outline',
+      active: false,
+      loading: false
+    };
+  }
+  
+  // 优先使用中文名称，字段可能是 nameCn 或 name_cn
+  const title = node.nameCn || node.name_cn || node.name || nodeId;
+  
+  // 根据图层类型确定图标和类型名称
+  let typeName = '其他';
+  let icon = 'material-symbols:layers-outline';
+  
+  switch (node.type) {
+    case 0: // POINT
+      typeName = '点';
+      icon = 'material-symbols:place';
+      break;
+    case 1: // LINE
+      typeName = '线';
+      icon = 'material-symbols:route';
+      break;
+    case 2: // POLYGON
+      typeName = '面';
+      icon = 'material-symbols:polygon';
+      break;
+    case 3: // RASTER
+      typeName = '栅格';
+      icon = 'material-symbols:image';
+      break;
+    case 4: // THREED
+      typeName = '三维';
+      icon = 'material-symbols:view-in-ar';
+      break;
+    case 5: // UNDERWATER
+      typeName = '水下';
+      icon = 'material-symbols:water-drop';
+      break;
+    default:
+      typeName = '其他';
+      icon = 'material-symbols:layers-outline';
+      break;
+  }
+  
+  return {
+    title,
+    type: node.type || 6,
+    typeName,
+    icon,
+    active: node.active || false,
+    loading: node.loading || false
+  };
+};
+
+// 更新图层管理面板中的图层信息（当图层状态变化时调用）
+const updateLayerPanelEntry = (nodeId: string) => {
+  const layerTree = layerTreeData.value || [];
+  const index = layerTree.findIndex(item => String((item as any)?.key) === nodeId);
+  if (index === -1) return;
+  
+  const displayInfo = getLayerDisplayInfo(nodeId);
+  const entry = layerTree[index] as any;
+  if (entry) {
+    entry.title = displayInfo.title;
+    entry.type = displayInfo.type;
+    entry.typeName = displayInfo.typeName;
+    entry.icon = displayInfo.icon;
+    entry.active = displayInfo.active;
+    entry.loading = displayInfo.loading;
+    // 触发响应式更新
+    layerTreeData.value = [...layerTree];
+  }
 };
 
 const onContextMenuClick = (id: string, title: string) => {
@@ -335,23 +464,47 @@ const onContextMenuClick = (id: string, title: string) => {
 
   if (loadSuccess) {
     console.log(`图层 ${id} 加载成功，添加到图层管理面板`);
-    // 添加到图层管理面板
-    layerTreeData.value = [{ title, key: id, children: [] }, ...(layerTreeData.value || [])];
+    // 使用统一的图层显示信息函数
+    const displayInfo = getLayerDisplayInfo(id);
+    layerTreeData.value = [{
+      title: displayInfo.title,
+      key: id,
+      type: displayInfo.type,
+      typeName: displayInfo.typeName,
+      icon: displayInfo.icon,
+      active: displayInfo.active,
+      loading: displayInfo.loading,
+      children: []
+    }, ...(layerTreeData.value || [])];
     // 设置为勾选状态
     checkedKeys.value.push(id);
     scene.openNode(id);
-    window.$message?.success(`已添加图层: ${title}`);
+    // 更新图层状态
+    updateLayerPanelEntry(id);
+    window.$message?.success(`已添加图层: ${displayInfo.title}`);
   } else {
     console.log(`图层 ${id} 加载失败或已经加载过`);
     // 即使加载失败，也可能是因为已经加载过，尝试添加到面板
     const node = scene.findNodeById(id);
     if (node) {
       console.log(`节点 ${id} 已存在，添加到图层管理面板`);
-      layerTreeData.value = [{ title, key: id, children: [] }, ...(layerTreeData.value || [])];
+      const displayInfo = getLayerDisplayInfo(id);
+      layerTreeData.value = [{
+        title: displayInfo.title,
+        key: id,
+        type: displayInfo.type,
+        typeName: displayInfo.typeName,
+        icon: displayInfo.icon,
+        active: displayInfo.active,
+        loading: displayInfo.loading,
+        children: []
+      }, ...(layerTreeData.value || [])];
       checkedKeys.value.push(id);
       // 确保图层可见
       scene.openNode(id);
-      window.$message?.success(`已添加图层: ${title}`);
+      // 更新图层状态
+      updateLayerPanelEntry(id);
+      window.$message?.success(`已添加图层: ${displayInfo.title}`);
     } else {
       console.error(`节点 ${id} 不存在于scene中`);
       console.log(
@@ -368,8 +521,20 @@ const onLoadNodesByName = (input: { id: string; name: string }[]) => {
     const nodeId = scene?.loadNodeByName(item.id);
     console.log(nodeId);
     if (nodeId) {
-      layerTreeData.value = [{ title: item.name, key: nodeId, children: [] }, ...(layerTreeData.value || [])];
+      const displayInfo = getLayerDisplayInfo(nodeId);
+      layerTreeData.value = [{
+        title: displayInfo.title,
+        key: nodeId,
+        type: displayInfo.type,
+        typeName: displayInfo.typeName,
+        icon: displayInfo.icon,
+        active: displayInfo.active,
+        loading: displayInfo.loading,
+        children: []
+      }, ...(layerTreeData.value || [])];
       checkedKeys.value.push(nodeId);
+      // 更新图层状态
+      updateLayerPanelEntry(nodeId);
     }
   });
 };
@@ -547,10 +712,14 @@ const onLayerCheckClick = (_: any, e: AntTreeNodeCheckedEvent) => {
           window.$message?.warning('该图层数据未就绪或不可用');
         }
       }
+      // 更新图层状态显示
+      updateLayerPanelEntry(nodeId);
     } else {
       // 隐藏图层但不移除
       scene?.closeNode(nodeId);
       console.log(`图层 ${nodeId} 设置为隐藏`);
+      // 更新图层状态显示
+      updateLayerPanelEntry(nodeId);
     }
   }
 };
@@ -799,6 +968,1071 @@ const cancelAddFeatureToLayer = () => {
   featureNameModalVisible.value = false;
   featureName.value = '';
 };
+
+// 路径规划点击处理
+const handleRoutePlanningClick = async (e: mapboxgl.MapMouseEvent) => {
+  if (!map || !scene) return;
+
+  const clickPoint: Feature = turf.point([e.lngLat.lng, e.lngLat.lat]) as Feature;
+
+  // 如果还没有起点，设置起点
+  if (!routeStartPoint.value) {
+    routeStartPoint.value = clickPoint;
+    
+    // 添加起点标记
+    if (routeStartMarker.value) {
+      routeStartMarker.value.remove();
+    }
+    const startEl = document.createElement('div');
+    startEl.className = 'route-marker route-marker-start';
+    startEl.style.width = '20px';
+    startEl.style.height = '20px';
+    startEl.style.borderRadius = '50%';
+    startEl.style.backgroundColor = '#52c41a';
+    startEl.style.border = '2px solid #fff';
+    startEl.style.cursor = 'pointer';
+    startEl.title = '起点';
+    
+    routeStartMarker.value = new mapboxgl.Marker(startEl)
+      .setLngLat([e.lngLat.lng, e.lngLat.lat])
+      .addTo(map);
+
+    window.$message?.info('已选择起点，请点击地图选择终点');
+    return;
+  }
+
+  // 如果已有起点，设置终点并开始规划
+  if (!routeEndPoint.value) {
+    routeEndPoint.value = clickPoint;
+    
+    // 添加终点标记
+    if (routeEndMarker.value) {
+      routeEndMarker.value.remove();
+    }
+    const endEl = document.createElement('div');
+    endEl.className = 'route-marker route-marker-end';
+    endEl.style.width = '20px';
+    endEl.style.height = '20px';
+    endEl.style.borderRadius = '50%';
+    endEl.style.backgroundColor = '#ff4d4f';
+    endEl.style.border = '2px solid #fff';
+    endEl.style.cursor = 'pointer';
+    endEl.title = '终点';
+    
+    routeEndMarker.value = new mapboxgl.Marker(endEl)
+      .setLngLat([e.lngLat.lng, e.lngLat.lat])
+      .addTo(map);
+
+    // 开始路径规划
+    await performRoutePlanning();
+  }
+};
+
+// 执行路径规划
+const performRoutePlanning = async () => {
+  if (!map || !scene || !routeStartPoint.value || !routeEndPoint.value) return;
+
+  const loadingMessage = window.$message?.loading({ content: '正在规划路线，请稍候...', duration: 0 });
+
+  try {
+    // 查找道路图层
+    const roadNodes = scene.nodes.filter(node => {
+      const nameCn = (node as any).nameCn || '';
+      const name = node.name || '';
+      return (nameCn.includes('道路') || nameCn.includes('交通') || nameCn.includes('路网') ||
+              name.includes('road') || name.includes('highway') || name.includes('street')) &&
+              (node.type === 1 || node.type === 2); // LINE 或 POLYGON 类型
+    });
+
+    if (roadNodes.length === 0) {
+      loadingMessage?.();
+      window.$message?.error('未找到道路图层，无法进行路径规划');
+      return;
+    }
+
+    // 合并所有道路图层的要素（限制数量以提升性能）
+    let allRoadFeatures: Feature[] = [];
+    const maxFeaturesPerLayer = 2000; // 每个图层最多处理2000个要素
+    
+    for (const node of roadNodes) {
+      try {
+        if (!node.active) {
+          scene.loadNode(node.id);
+          scene.openNode(node.id);
+          await new Promise(resolve => setTimeout(resolve, 500)); // 增加等待时间确保图层加载完成
+        }
+        
+        // 尝试多种方式获取要素
+        let features: any[] = [];
+        
+        // 方法1: 使用queryLayerFeatures
+        try {
+          features = scene.queryLayerFeatures(node.id);
+          console.log(`图层 ${node.id} 通过queryLayerFeatures获取到 ${features?.length || 0} 个要素`);
+        } catch (error) {
+          console.warn(`queryLayerFeatures失败:`, error);
+        }
+        
+        // 方法2: 如果queryLayerFeatures失败，尝试直接从geojsonData获取
+        if ((!features || features.length === 0) && (node as any).geojsonData) {
+          try {
+            const geojsonData = (node as any).geojsonData;
+            if (geojsonData.type === 'FeatureCollection' && geojsonData.features) {
+              features = geojsonData.features;
+              console.log(`图层 ${node.id} 从geojsonData获取到 ${features.length} 个要素`);
+            } else if (geojsonData.type === 'Feature') {
+              features = [geojsonData];
+              console.log(`图层 ${node.id} 从geojsonData获取到单个要素`);
+            }
+          } catch (error) {
+            console.warn(`从geojsonData获取要素失败:`, error);
+          }
+        }
+        
+        // 方法3: 尝试使用map.querySourceFeatures
+        if ((!features || features.length === 0) && map) {
+          try {
+            const sourceFeatures = map.querySourceFeatures(node.id);
+            if (sourceFeatures && sourceFeatures.length > 0) {
+              features = sourceFeatures;
+              console.log(`图层 ${node.id} 通过querySourceFeatures获取到 ${features.length} 个要素`);
+            }
+          } catch (error) {
+            console.warn(`querySourceFeatures失败:`, error);
+          }
+        }
+        
+        // 转换和验证要素格式
+        if (features && features.length > 0) {
+          const validFeatures: Feature[] = [];
+          for (const feature of features) {
+            try {
+              // 确保要素是有效的GeoJSON Feature格式
+              let validFeature: Feature;
+              
+              if (feature.type === 'Feature' && feature.geometry) {
+                // 已经是标准格式
+                validFeature = feature as Feature;
+              } else if (feature.geometry) {
+                // 有geometry但可能缺少type，补充type
+                validFeature = {
+                  type: 'Feature',
+                  geometry: feature.geometry,
+                  properties: feature.properties || {}
+                } as Feature;
+              } else {
+                console.warn('跳过无效要素（缺少geometry）:', feature);
+                continue;
+              }
+              
+              // 验证geometry类型是否为LineString或MultiLineString
+              if (validFeature.geometry.type === 'LineString' || 
+                  validFeature.geometry.type === 'MultiLineString' ||
+                  validFeature.geometry.type === 'Polygon' || // 多边形也可以作为道路（边界）
+                  validFeature.geometry.type === 'MultiPolygon') {
+                validFeatures.push(validFeature);
+              } else {
+                console.warn(`跳过非线要素类型: ${validFeature.geometry.type}`);
+              }
+            } catch (error) {
+              console.warn('处理要素失败:', error, feature);
+              continue;
+            }
+          }
+          
+          // 限制每个图层的要素数量
+          const limitedFeatures = validFeatures.slice(0, maxFeaturesPerLayer);
+          allRoadFeatures = allRoadFeatures.concat(limitedFeatures);
+          
+          if (validFeatures.length > maxFeaturesPerLayer) {
+            console.warn(`图层 ${node.id} 要素过多 (${validFeatures.length})，限制处理数量为 ${maxFeaturesPerLayer}`);
+          }
+          
+          console.log(`图层 ${node.id} 最终添加了 ${limitedFeatures.length} 个有效道路要素`);
+        } else {
+          console.warn(`图层 ${node.id} 未获取到要素`);
+        }
+      } catch (error) {
+        console.error(`获取道路图层 ${node.id} 要素失败:`, error);
+      }
+    }
+
+    if (allRoadFeatures.length === 0) {
+      loadingMessage?.();
+      window.$message?.error('道路图层中没有数据，无法进行路径规划');
+      return;
+    }
+
+    console.log(`准备进行路径规划，道路要素总数: ${allRoadFeatures.length}`);
+
+    // 执行路径规划（使用Web Worker或异步处理以避免阻塞）
+    const result = await new Promise<{ route: Feature | null; distance: number; message: string }>((resolve) => {
+      // 使用setTimeout将计算放到下一个事件循环，避免阻塞UI
+      setTimeout(() => {
+        try {
+          const routeResult = planRouteOnRoadNetwork(
+            routeStartPoint.value!,
+            routeEndPoint.value!,
+            allRoadFeatures,
+            5000 // 最大搜索半径 5000 米（5公里），允许用户点击的点有更大的偏差
+          );
+          resolve(routeResult);
+        } catch (error) {
+          console.error('路径规划执行失败:', error);
+          resolve({
+            route: null,
+            distance: 0,
+            message: `路径规划失败: ${error instanceof Error ? error.message : '未知错误'}`
+          });
+        }
+      }, 100);
+    });
+
+    loadingMessage?.();
+
+    if (result.route) {
+      // 将路径添加到地图
+      const layerId = addCalculationResultToMap(scene, map, result.route, '规划路线');
+      
+      if (layerId) {
+        routeResultLayerId.value = layerId;
+        plannedRoute.value = result.route;
+        
+        // 自动缩放以显示完整路线
+        const bounds = turf.bbox(result.route);
+        map.fitBounds(
+          [
+            [bounds[0], bounds[1]],
+            [bounds[2], bounds[3]]
+          ],
+          { padding: 100, maxZoom: 16, duration: 1000 }
+        );
+
+        window.$message?.success(result.message || '路径规划成功');
+      } else {
+        window.$message?.error('无法将路线添加到地图');
+      }
+    } else {
+      window.$message?.error(result.message || '路径规划失败');
+    }
+  } catch (error) {
+    loadingMessage?.();
+    console.error('路径规划失败:', error);
+    window.$message?.error(`路径规划失败: ${error instanceof Error ? error.message : '未知错误'}`);
+  }
+};
+
+// 启用路径规划模式
+const enableRoutePlanning = () => {
+  routePlanningMode.value = true;
+  routeStartPoint.value = null;
+  routeEndPoint.value = null;
+  plannedRoute.value = null;
+  
+  // 清除之前的标记
+  if (routeStartMarker.value) {
+    routeStartMarker.value.remove();
+    routeStartMarker.value = null;
+  }
+  if (routeEndMarker.value) {
+    routeEndMarker.value.remove();
+    routeEndMarker.value = null;
+  }
+
+  // 清除之前的路线
+  if (routeResultLayerId.value && scene) {
+    try {
+      scene.closeNode(routeResultLayerId.value);
+    } catch (error) {
+      console.warn('清除旧路线失败:', error);
+    }
+    routeResultLayerId.value = null;
+  }
+
+  window.$message?.info('路径规划模式已启用，请点击地图选择起点');
+};
+
+// 禁用路径规划模式
+const disableRoutePlanning = () => {
+  routePlanningMode.value = false;
+  
+  // 清除标记
+  if (routeStartMarker.value) {
+    routeStartMarker.value.remove();
+    routeStartMarker.value = null;
+  }
+  if (routeEndMarker.value) {
+    routeEndMarker.value.remove();
+    routeEndMarker.value = null;
+  }
+
+  // 保留路线显示，但清除状态
+  routeStartPoint.value = null;
+  routeEndPoint.value = null;
+};
+
+// 显示图层选择对话框
+const showLayerSelectionModal = (analysisType: string) => {
+  if (!scene) {
+    window.$message?.warning('地图场景未初始化');
+    return;
+  }
+  
+  currentAnalysisType.value = analysisType;
+  selectedLayerForAnalysis.value = [];
+  
+  // 重置参数为默认值
+  if (analysisType === 'bufferAnalysis') {
+    analysisParams.value.bufferDistance = 0.5; // 默认0.5千米
+    analysisParams.value.bufferUnit = 'kilometers';
+  } else if (analysisType === 'nearestNeighbor') {
+    analysisParams.value.nearestSearchRadius = 1; // 默认1千米
+    analysisParams.value.nearestUnit = 'kilometers';
+    analysisParams.value.nearestMaxResults = 1;
+    // 重置最近邻分析的特殊状态
+    nearestNeighborTargetLayerId.value = '';
+    nearestNeighborTargetFeature.value = null;
+    nearestNeighborTargetFeatureLayerId.value = '';
+    nearestNeighborSelectTargetFeatureMode.value = false;
+    // 重置最近邻分析的特殊状态
+    nearestNeighborTargetLayerId.value = '';
+    nearestNeighborTargetFeature.value = null;
+    nearestNeighborTargetFeatureLayerId.value = '';
+    nearestNeighborSelectTargetFeatureMode.value = false;
+  } else if (analysisType === 'overlayAnalysis') {
+    analysisParams.value.overlayOperation = 'intersect';
+  } else if (analysisType === 'densityAnalysis') {
+    analysisParams.value.densitySearchRadius = 1; // 默认1千米
+    analysisParams.value.densityUnit = 'kilometers';
+    analysisParams.value.densityGridSize = 100;
+  }
+  
+  // 根据分析类型筛选可用的图层
+  availableLayers.value = scene.nodes
+    .filter(node => {
+      // 缓冲区分析：需要点、线或面图层
+      if (analysisType === 'bufferAnalysis') {
+        return node.type === 0 || node.type === 1 || node.type === 2;
+      }
+      // 最近邻分析：第一步选择目标图层（任何图层都可以）
+      if (analysisType === 'nearestNeighbor') {
+        // 如果已经选择了目标图层，则显示搜索图层（排除目标图层）
+        if (nearestNeighborTargetLayerId.value) {
+          return node.id !== nearestNeighborTargetLayerId.value;
+        }
+        return true; // 任何图层都可以作为目标图层
+      }
+      // 叠加分析：需要面图层
+      if (analysisType === 'overlayAnalysis') {
+        return node.type === 2; // POLYGON
+      }
+      // 密度分析：需要点图层
+      if (analysisType === 'densityAnalysis') {
+        return node.type === 0; // POINT
+      }
+      return true;
+    })
+    .map(node => ({
+      id: node.id,
+      name: (node as any).nameCn || node.name || node.id,
+      type: node.type
+    }));
+  
+  if (availableLayers.value.length === 0) {
+    window.$message?.warning('未找到符合条件的图层');
+    return;
+  }
+  
+  layerSelectionModalVisible.value = true;
+};
+
+// 确认图层选择并执行分析
+const confirmLayerSelectionAndAnalyze = async () => {
+  if (!currentAnalysisType.value || !scene || !map) return;
+  
+  if (selectedLayerForAnalysis.value.length === 0) {
+    window.$message?.warning('请至少选择一个图层');
+    return;
+  }
+  
+  // 最近邻分析的特殊处理
+  if (currentAnalysisType.value === 'nearestNeighbor') {
+    // 如果还没有选择目标图层（第一步）
+    if (!nearestNeighborTargetLayerId.value) {
+      // 用户选择了目标图层
+      if (selectedLayerForAnalysis.value.length !== 1) {
+        window.$message?.warning('请选择一个目标图层');
+        return;
+      }
+      
+      const targetLayerId = selectedLayerForAnalysis.value[0];
+      const targetNode = scene.findNodeById(targetLayerId);
+      
+      if (!targetNode) {
+        window.$message?.error('未找到目标图层');
+        return;
+      }
+      
+      // 保存目标图层ID
+      nearestNeighborTargetLayerId.value = targetLayerId;
+      
+      // 加载目标图层
+      if (!targetNode.active) {
+        scene.loadNode(targetLayerId);
+        scene.openNode(targetLayerId);
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      // 关闭对话框
+      layerSelectionModalVisible.value = false;
+      
+      // 进入选择目标要素模式
+      nearestNeighborSelectTargetFeatureMode.value = true;
+      
+      // 确保目标图层可见
+      if (!checkedKeys.value.includes(targetLayerId)) {
+        checkedKeys.value = [...checkedKeys.value, targetLayerId];
+      }
+      
+      // 提示用户在地图上选择目标要素
+      window.$message?.info('已选择目标图层，请在地图上点击选择目标图层中的一个具体要素');
+      return;
+    }
+    
+    // 如果已经选择了目标图层和目标要素，现在是选择搜索图层（第二步）
+    if (!nearestNeighborTargetFeature.value) {
+      window.$message?.warning('请先在地图上选择目标图层中的一个具体要素');
+      return;
+    }
+    
+    // 用户选择了搜索图层
+    if (selectedLayerForAnalysis.value.length !== 1) {
+      window.$message?.warning('请选择一个搜索图层');
+      return;
+    }
+    
+    // 执行最近邻分析
+    layerSelectionModalVisible.value = false;
+    await performNearestNeighborAnalysis(
+      nearestNeighborTargetFeature.value,
+      selectedLayerForAnalysis.value[0]
+    );
+    return;
+  }
+  
+  // 叠加分析需要两个图层
+  if (currentAnalysisType.value === 'overlayAnalysis' && selectedLayerForAnalysis.value.length < 2) {
+    window.$message?.warning('叠加分析需要至少选择两个图层');
+    return;
+  }
+  
+  layerSelectionModalVisible.value = false;
+  const loadingMsg = window.$message?.loading({ content: '正在执行分析，请稍候...', duration: 0 });
+  
+  try {
+    // 加载选中的图层
+    if (!scene) {
+      loadingMsg?.();
+      window.$message?.error('地图场景未初始化');
+      return;
+    }
+    
+    const selectedNodes = selectedLayerForAnalysis.value
+      .map(id => scene!.findNodeById(id))
+      .filter(node => node !== null) as MapNode[];
+    
+    for (const node of selectedNodes) {
+      if (!node.active) {
+        scene!.loadNode(node.id);
+        scene!.openNode(node.id);
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+    
+    // 获取图层要素
+    const allFeatures: Feature[][] = [];
+    for (const node of selectedNodes) {
+      const features = scene!.queryLayerFeatures(node.id);
+      if (features && features.length > 0) {
+        allFeatures.push(features);
+      }
+    }
+    
+    let resultLayerId: string | null = null;
+    
+    // 根据分析类型执行相应的分析
+    switch (currentAnalysisType.value) {
+      case 'bufferAnalysis': {
+        if (allFeatures.length === 0 || allFeatures[0].length === 0) {
+          loadingMsg?.();
+          window.$message?.error('所选图层没有要素数据');
+          return;
+        }
+        // 使用用户配置的缓冲区距离（输入单位是千米，需要转换为米进行计算）
+        let bufferDistance = analysisParams.value.bufferDistance || 0.5;
+        if (analysisParams.value.bufferUnit === 'kilometers') {
+          bufferDistance = bufferDistance * 1000; // 转换为米
+        } else {
+          // 如果用户选择了米，直接使用（保持兼容性）
+          bufferDistance = bufferDistance;
+        }
+        const { createBuffer } = await import('@/utils/mapUtils/geoCalculations');
+        const bufferFeatures: Feature[] = [];
+        
+        for (const feature of allFeatures[0]) {
+          const buffer = createBuffer(feature, bufferDistance);
+          if (buffer) {
+            bufferFeatures.push(buffer);
+          }
+        }
+        
+        if (bufferFeatures.length > 0) {
+          const featureCollection = {
+            type: 'FeatureCollection',
+            features: bufferFeatures
+          };
+          
+          const resultId = `calc_${Date.now()}`;
+          const distanceValue = analysisParams.value.bufferDistance || 0.5;
+          const distanceLabel = analysisParams.value.bufferUnit === 'kilometers' 
+            ? `${distanceValue}公里` 
+            : `${distanceValue}米`;
+          scene!.addTempNodeFromCollection(resultId, `缓冲区分析结果(${distanceLabel})`, featureCollection);
+          const loadSuccess = scene!.loadNode(resultId);
+          if (loadSuccess) {
+            scene!.openNode(resultId);
+            resultLayerId = resultId;
+            
+            // 自动缩放
+            const bounds = turf.bbox(featureCollection as any);
+            map.fitBounds(
+              [
+                [bounds[0], bounds[1]],
+                [bounds[2], bounds[3]]
+              ],
+              { padding: 100, maxZoom: 16, duration: 1000 }
+            );
+          }
+        }
+        break;
+      }
+      
+      
+      case 'overlayAnalysis': {
+        if (allFeatures.length < 2 || allFeatures[0].length === 0 || allFeatures[1].length === 0) {
+          loadingMsg?.();
+          window.$message?.error('叠加分析需要至少两个图层，且每个图层都要有面要素');
+          return;
+        }
+        // 根据用户选择的操作类型执行相应的叠加分析
+        const operation = analysisParams.value.overlayOperation || 'intersect';
+        const { intersectFeatures, unionFeatures, differenceFeatures } = await import('@/utils/mapUtils/geoCalculations');
+        const resultFeatures: Feature[] = [];
+        
+        if (operation === 'intersect') {
+          // 交集：返回两个图层重叠的区域
+          for (const feature1 of allFeatures[0]) {
+            if (feature1.geometry.type === 'Polygon') {
+              for (const feature2 of allFeatures[1]) {
+                if (feature2.geometry.type === 'Polygon') {
+                  const intersection = intersectFeatures(feature1, feature2);
+                  if (intersection) {
+                    resultFeatures.push(intersection);
+                  }
+                }
+              }
+            }
+          }
+        } else if (operation === 'union') {
+          // 并集：合并两个图层的所有区域
+          // 收集所有多边形要素
+          const allPolygons: Feature[] = [];
+          
+          // 从第一个图层收集多边形
+          for (const feature of allFeatures[0]) {
+            if (feature.geometry && 
+                (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')) {
+              allPolygons.push(feature);
+            }
+          }
+          
+          // 从第二个图层收集多边形
+          for (const feature of allFeatures[1]) {
+            if (feature.geometry && 
+                (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')) {
+              allPolygons.push(feature);
+            }
+          }
+          
+          if (allPolygons.length === 0) {
+            loadingMsg?.();
+            window.$message?.error('没有有效的多边形要素进行并集分析');
+            return;
+          }
+          
+          if (allPolygons.length === 1) {
+            resultFeatures.push(allPolygons[0]);
+          } else {
+            // 使用unionFeatures合并所有多边形
+            const unionResult = unionFeatures(allPolygons);
+            if (unionResult) {
+              resultFeatures.push(unionResult);
+            } else {
+              loadingMsg?.();
+              window.$message?.warning('并集分析未生成结果，可能要素不重叠');
+              return;
+            }
+          }
+        } else if (operation === 'difference') {
+          // 差集：第一个图层减去第二个图层
+          for (const feature1 of allFeatures[0]) {
+            if (feature1.geometry.type === 'Polygon') {
+              let differenceResult: Feature = feature1;
+              // 依次减去第二个图层中的所有要素
+              for (const feature2 of allFeatures[1]) {
+                if (feature2.geometry.type === 'Polygon') {
+                  const difference = differenceFeatures(differenceResult, feature2);
+                  if (difference) {
+                    differenceResult = difference;
+                  } else {
+                    break; // 如果差集为空，跳出循环
+                  }
+                }
+              }
+              // 只有当差集不为空时才添加
+              if (differenceResult && differenceResult.geometry) {
+                resultFeatures.push(differenceResult);
+              }
+            }
+          }
+        }
+        
+        if (resultFeatures.length > 0) {
+          const featureCollection = {
+            type: 'FeatureCollection',
+            features: resultFeatures
+          };
+          
+          const resultId = `calc_${Date.now()}`;
+          const operationNames: Record<string, string> = {
+            intersect: '交集',
+            union: '并集',
+            difference: '差集'
+          };
+          scene!.addTempNodeFromCollection(resultId, `叠加分析结果(${operationNames[operation]})`, featureCollection);
+          const loadSuccess = scene!.loadNode(resultId);
+          if (loadSuccess) {
+            scene!.openNode(resultId);
+            resultLayerId = resultId;
+            
+            const bounds = turf.bbox(featureCollection as any);
+            map.fitBounds(
+              [
+                [bounds[0], bounds[1]],
+                [bounds[2], bounds[3]]
+              ],
+              { padding: 100, maxZoom: 16, duration: 1000 }
+            );
+          }
+        }
+        break;
+      }
+      
+      case 'densityAnalysis': {
+        if (allFeatures.length === 0 || allFeatures[0].length === 0) {
+          loadingMsg?.();
+          window.$message?.error('所选图层没有点要素数据');
+          return;
+        }
+        // 使用用户配置的搜索半径（输入单位是千米，需要转换为米进行计算）
+        let searchRadius = analysisParams.value.densitySearchRadius || 1;
+        if (analysisParams.value.densityUnit === 'kilometers') {
+          searchRadius = searchRadius * 1000; // 转换为米
+        } else {
+          // 如果用户选择了米，直接使用（保持兼容性）
+          searchRadius = searchRadius;
+        }
+        // 计算点密度
+        const { calculatePointDensity } = await import('@/utils/mapUtils/geoCalculations');
+        const densityFeatures = calculatePointDensity(allFeatures[0], searchRadius);
+        
+        if (densityFeatures.length > 0) {
+          // 确保所有要素都有有效的geometry
+          const validFeatures = densityFeatures.filter(feature => 
+            feature && 
+            feature.geometry && 
+            feature.geometry.type &&
+            (feature.geometry as any).coordinates
+          );
+          
+          if (validFeatures.length === 0) {
+            loadingMsg?.();
+            window.$message?.error('密度分析结果中没有有效的要素');
+            return;
+          }
+          
+          const featureCollection = {
+            type: 'FeatureCollection',
+            features: validFeatures
+          };
+          
+          const resultId = `calc_${Date.now()}`;
+          const radiusValue = analysisParams.value.densitySearchRadius || 1;
+          const radiusLabel = analysisParams.value.densityUnit === 'kilometers' 
+            ? `${radiusValue}公里` 
+            : `${radiusValue}米`;
+          
+          try {
+            scene!.addTempNodeFromCollection(resultId, `密度分析结果(半径${radiusLabel})`, featureCollection);
+            const loadSuccess = scene!.loadNode(resultId);
+            if (loadSuccess) {
+              scene!.openNode(resultId);
+              resultLayerId = resultId;
+              
+              const bounds = turf.bbox(featureCollection as any);
+              map.fitBounds(
+                [
+                  [bounds[0], bounds[1]],
+                  [bounds[2], bounds[3]]
+                ],
+                { padding: 100, maxZoom: 16, duration: 1000 }
+              );
+            }
+          } catch (error) {
+            console.error('添加密度分析结果到地图失败:', error);
+            loadingMsg?.();
+            window.$message?.error(`添加结果到地图失败: ${error instanceof Error ? error.message : '未知错误'}`);
+            return;
+          }
+        } else {
+          loadingMsg?.();
+          window.$message?.warning('密度分析未生成结果');
+        }
+        break;
+      }
+    }
+    
+    loadingMsg?.();
+    
+    if (resultLayerId) {
+      window.$message?.success(`${ANALYSIS_TITLES[currentAnalysisType.value]}完成，结果已显示在地图上`);
+    } else {
+      window.$message?.warning('分析完成，但未生成结果图层');
+    }
+  } catch (error) {
+    loadingMsg?.();
+    console.error('分析失败:', error);
+    window.$message?.error(`分析失败: ${error instanceof Error ? error.message : '未知错误'}`);
+  }
+};
+
+// 处理地图点击，用于最近邻分析选择目标要素
+const handleNearestNeighborFeatureSelection = async (e: mapboxgl.MapMouseEvent) => {
+  if (!map || !scene || !nearestNeighborSelectTargetFeatureMode.value) return;
+  if (!nearestNeighborTargetLayerId.value) return;
+  
+  try {
+    // 获取点击位置的要素
+    const features = map.queryRenderedFeatures(e.point, {
+      layers: [nearestNeighborTargetLayerId.value]
+    });
+    
+    if (!features || features.length === 0) {
+      // 尝试通过坐标查找最近的要素
+      const clickPoint = turf.point([e.lngLat.lng, e.lngLat.lat]);
+      const layerFeatures = scene.queryLayerFeatures(nearestNeighborTargetLayerId.value);
+      
+      if (!layerFeatures || layerFeatures.length === 0) {
+        window.$message?.warning('目标图层中没有要素，请重新选择图层');
+        return;
+      }
+      
+      // 查找最近的要素（放宽距离限制，并优先选择包含点击点的要素）
+      let nearestFeature: Feature | null = null;
+      let minDistance = Infinity;
+      const maxSearchDistance = 5; // 5公里，允许更大的偏差
+      
+      for (const feature of layerFeatures) {
+        try {
+          // 首先检查点击点是否在要素内部或边界上（对于Polygon和LineString）
+          if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
+            // 检查点是否在多边形内
+            try {
+              if (turf.booleanPointInPolygon(clickPoint as any, feature as any)) {
+                // 点击点在要素内部，直接选择
+                nearestFeature = feature;
+                minDistance = 0;
+                break;
+              }
+            } catch (error) {
+              // 如果检查失败，继续使用距离判断
+            }
+          } else if (feature.geometry.type === 'LineString' || feature.geometry.type === 'MultiLineString') {
+            // 对于线要素，检查点是否在线的附近（50米内）
+            try {
+              const nearestOnLine = turf.nearestPointOnLine(feature as any, clickPoint as any, { units: 'kilometers' });
+              const distanceToLine = turf.distance(clickPoint as any, nearestOnLine as any, { units: 'kilometers' });
+              if (distanceToLine < 0.05) { // 50米 = 0.05公里
+                // 点在线上或非常接近线，直接选择
+                nearestFeature = feature;
+                minDistance = distanceToLine;
+                break;
+              }
+            } catch (error) {
+              // 如果检查失败，继续使用距离判断
+            }
+          }
+          
+          // 如果还没有找到，使用中心点距离判断
+          let featurePoint: Feature;
+          if (feature.geometry.type === 'Point') {
+            featurePoint = feature;
+          } else if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'LineString' ||
+                     feature.geometry.type === 'MultiPolygon' || feature.geometry.type === 'MultiLineString') {
+            featurePoint = turf.centroid(feature as any) as Feature;
+          } else {
+            continue;
+          }
+          
+          const distance = turf.distance(clickPoint, featurePoint as any, { units: 'kilometers' }); // 使用千米
+          if (distance < minDistance && distance < maxSearchDistance) {
+            minDistance = distance;
+            nearestFeature = feature;
+          }
+        } catch (error) {
+          console.warn('计算要素距离失败:', error);
+          continue;
+        }
+      }
+      
+      if (!nearestFeature) {
+        window.$message?.warning(`未找到附近 ${maxSearchDistance} 公里范围内的要素，请点击更靠近要素的位置`);
+        return;
+      }
+      
+      // 如果找到的要素距离较远，给出提示
+      if (minDistance > 1) {
+        window.$message?.info(`已选择距离 ${minDistance.toFixed(2)} 公里最近的要素`);
+      }
+      
+      nearestNeighborTargetFeature.value = nearestFeature;
+    } else {
+      // 使用点击到的要素
+      const clickedFeature = features[0] as any;
+      if (clickedFeature.geometry) {
+        nearestNeighborTargetFeature.value = clickedFeature as Feature;
+      } else {
+        window.$message?.warning('无法获取要素信息，请重新点击');
+        return;
+      }
+    }
+    
+    // 退出选择模式
+    nearestNeighborSelectTargetFeatureMode.value = false;
+    
+    // 显示目标要素信息
+    const featureInfo = nearestNeighborTargetFeature.value.properties 
+      ? JSON.stringify(nearestNeighborTargetFeature.value.properties).substring(0, 50)
+      : '目标要素';
+    window.$message?.success(`已选择目标要素: ${featureInfo}...`);
+    
+    // 重新打开图层选择对话框，让用户选择搜索图层
+    availableLayers.value = scene.nodes
+      .filter(node => node.id !== nearestNeighborTargetLayerId.value)
+      .map(node => ({
+        id: node.id,
+        name: (node as any).nameCn || node.name || node.id,
+        type: node.type
+      }));
+    
+    if (availableLayers.value.length === 0) {
+      window.$message?.warning('未找到可用的搜索图层');
+      nearestNeighborTargetLayerId.value = '';
+      nearestNeighborTargetFeature.value = null;
+      return;
+    }
+    
+    selectedLayerForAnalysis.value = [];
+    layerSelectionModalVisible.value = true;
+    window.$message?.info('请选择搜索图层');
+  } catch (error) {
+    console.error('选择目标要素失败:', error);
+    window.$message?.error('选择目标要素失败，请重试');
+  }
+};
+
+// 执行最近邻分析
+const performNearestNeighborAnalysis = async (
+  targetFeature: Feature,
+  searchLayerId: string
+) => {
+  if (!scene || !map) return;
+  
+  const loadingMsg = window.$message?.loading({ content: '正在执行最近邻分析，请稍候...', duration: 0 });
+  
+  try {
+    // 加载搜索图层
+    const searchNode = scene.findNodeById(searchLayerId);
+    if (!searchNode) {
+      loadingMsg?.();
+      window.$message?.error('搜索图层不存在');
+      return;
+    }
+    
+    if (!searchNode.active) {
+      scene.loadNode(searchLayerId);
+      scene.openNode(searchLayerId);
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    
+    // 获取搜索图层的要素
+    const searchFeatures = scene.queryLayerFeatures(searchLayerId);
+    if (!searchFeatures || searchFeatures.length === 0) {
+      loadingMsg?.();
+      window.$message?.error('搜索图层中没有要素');
+      return;
+    }
+    
+        // 使用用户配置的搜索半径（输入单位是千米，需要转换为米进行计算）
+        let searchRadius = analysisParams.value.nearestSearchRadius || 1;
+        if (analysisParams.value.nearestUnit === 'kilometers') {
+          searchRadius = searchRadius * 1000; // 转换为米
+        } else {
+          // 如果用户选择了米，直接使用（保持兼容性）
+          searchRadius = searchRadius;
+        }
+    const maxResults = analysisParams.value.nearestMaxResults || 1;
+    
+    // 处理目标要素（如果是点，直接使用；如果是其他类型，提取中心点）
+    let targetPoint: Feature;
+    if (targetFeature.geometry.type === 'Point') {
+      targetPoint = targetFeature;
+    } else if (targetFeature.geometry.type === 'Polygon' || targetFeature.geometry.type === 'LineString') {
+      targetPoint = turf.centroid(targetFeature as any) as Feature;
+    } else {
+      loadingMsg?.();
+      window.$message?.error('目标要素类型不支持');
+      return;
+    }
+    
+    // 将所有搜索要素转换为点要素（如果是非点要素，提取中心点）
+    const searchPoints: Feature[] = [];
+    for (const feature of searchFeatures) {
+      if (feature.geometry.type === 'Point') {
+        searchPoints.push(feature);
+      } else if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'LineString') {
+        // 提取中心点
+        const centroid = turf.centroid(feature as any);
+        searchPoints.push(centroid as Feature);
+      }
+    }
+    
+    // 在搜索半径内查找最近邻（searchRadius是米，需要转换为千米进行比较）
+    const searchRadiusKm = searchRadius / 1000; // 转换为千米
+    const candidatesInRadius: Array<{ feature: Feature; distance: number }> = [];
+    for (const searchPoint of searchPoints) {
+      try {
+        const distance = turf.distance(targetPoint as any, searchPoint as any, { units: 'kilometers' }); // 使用千米
+        if (distance <= searchRadiusKm) {
+          candidatesInRadius.push({ feature: searchPoint, distance }); // distance现在是千米
+        }
+      } catch (error) {
+        // 跳过计算失败的点
+        continue;
+      }
+    }
+    
+    // 按距离排序，取前 maxResults 个
+    candidatesInRadius.sort((a, b) => a.distance - b.distance);
+    const selectedNearest = candidatesInRadius.slice(0, maxResults);
+    
+    if (selectedNearest.length === 0) {
+      loadingMsg?.();
+      const radiusDisplay = analysisParams.value.nearestUnit === 'kilometers' 
+        ? `${searchRadiusKm}公里` 
+        : `${searchRadius}米`;
+      window.$message?.warning(`在搜索半径内（${radiusDisplay}）未找到最近邻要素`);
+      return;
+    }
+    
+    // 创建从目标点到最近点的连线
+    const nearestFeatures: Feature[] = [];
+    for (const nearest of selectedNearest) {
+      // 创建从目标点到最近点的连线
+      const lineCoords = [
+        (targetPoint.geometry as any).coordinates,
+        ((nearest.feature.geometry as any).coordinates)
+      ];
+      const lineFeature = turf.lineString(lineCoords) as Feature;
+      // 添加距离属性（distance已经是千米）
+      lineFeature.properties = {
+        ...lineFeature.properties,
+        distance: Number(nearest.distance.toFixed(2)), // 千米
+        distance_unit: '公里',
+        distance_km: Number(nearest.distance.toFixed(2)), // 千米值
+        distance_m: Number((nearest.distance * 1000).toFixed(2)) // 也保存米值以便兼容
+      };
+      nearestFeatures.push(lineFeature);
+    }
+    
+    loadingMsg?.();
+    
+    if (nearestFeatures.length > 0) {
+      const featureCollection = {
+        type: 'FeatureCollection',
+        features: nearestFeatures
+      };
+      
+      const resultId = `calc_${Date.now()}`;
+      scene.addTempNodeFromCollection(resultId, '最近邻分析结果', featureCollection);
+      const loadSuccess = scene.loadNode(resultId);
+      if (loadSuccess) {
+        scene.openNode(resultId);
+        
+        // 自动缩放以显示完整结果
+        const bounds = turf.bbox(featureCollection as any);
+        map.fitBounds(
+          [
+            [bounds[0], bounds[1]],
+            [bounds[2], bounds[3]]
+          ],
+          { padding: 100, maxZoom: 16, duration: 1000 }
+        );
+        
+        window.$message?.success(`最近邻分析完成，找到 ${selectedNearest.length} 个最近邻要素`);
+      } else {
+        window.$message?.error('无法将结果添加到地图');
+      }
+    } else {
+      window.$message?.warning('最近邻分析未生成结果');
+    }
+  } catch (error) {
+    loadingMsg?.();
+    console.error('最近邻分析失败:', error);
+    window.$message?.error(`最近邻分析失败: ${error instanceof Error ? error.message : '未知错误'}`);
+  }
+};
+
+// 取消图层选择
+const cancelLayerSelection = () => {
+  layerSelectionModalVisible.value = false;
+
+  // 重置最近邻分析状态（如果用户取消，完全重置状态）
+  if (currentAnalysisType.value === 'nearestNeighbor') {
+    nearestNeighborTargetLayerId.value = '';
+    nearestNeighborTargetFeature.value = null;
+    nearestNeighborTargetFeatureLayerId.value = '';
+    nearestNeighborSelectTargetFeatureMode.value = false;
+  }
+
+  currentAnalysisType.value = null;
+  selectedLayerForAnalysis.value = [];
+};
+
+// 暴露给 createHorizontalControlBar 使用的函数
+(window as any).enableRoutePlanning = enableRoutePlanning;
+(window as any).disableRoutePlanning = disableRoutePlanning;
+(window as any).routePlanningMode = routePlanningMode;
 
 // 移至 utils/mapUtils/controls.ts -> addBoxZoomControls(map)
 
@@ -1106,7 +2340,17 @@ onMounted(async () => {
     map.on('contextmenu', handleDrawContextMenu);
 
     // 点击地图其他地方关闭右键菜单
-    map.on('click', closeDrawContextMenu);
+    map.on('click', (e: mapboxgl.MapMouseEvent) => {
+      // 如果路径规划模式开启，处理路径规划点击
+      if (routePlanningMode.value) {
+        handleRoutePlanningClick(e);
+      } else if (nearestNeighborSelectTargetFeatureMode.value) {
+        // 如果最近邻分析处于选择目标要素模式，处理要素选择
+        handleNearestNeighborFeatureSelection(e);
+      } else {
+        closeDrawContextMenu();
+      }
+    });
 
     // 捕获阶段拦截容器上的右键按下/抬起，防止 Draw 在右键时改写选择（保留左键多选的结果）
     const containerEl = map.getCanvasContainer();
@@ -1212,10 +2456,15 @@ onMounted(async () => {
           const missingIds = savedKeys.filter(id => !existingKeys.has(String(id)));
           if (missingIds.length && scene) {
             const extras = missingIds.map(id => {
-              const n = scene?.findNodeById(id) as any;
+              const displayInfo = getLayerDisplayInfo(id);
               return {
                 key: id,
-                title: n?.name_cn || n?.name || id,
+                title: displayInfo.title,
+                type: displayInfo.type,
+                typeName: displayInfo.typeName,
+                icon: displayInfo.icon,
+                active: displayInfo.active,
+                loading: displayInfo.loading,
                 children: []
               };
             });
@@ -1362,6 +2611,8 @@ watch(
             console.log('根据勾选状态加载图层:', id);
             scene?.loadNode(id);
             scene?.openNode(id);
+            // 更新图层状态显示
+            updateLayerPanelEntry(id);
           } catch (e) {
             console.error('根据勾选状态加载图层失败:', id, e);
           }
@@ -1373,6 +2624,8 @@ watch(
         if (!next.has(id)) {
           try {
             scene?.closeNode(id);
+            // 更新图层状态显示
+            updateLayerPanelEntry(id);
           } catch (e) {
             console.error('根据勾选状态关闭图层失败:', id, e);
           }
@@ -1423,7 +2676,6 @@ const ANALYSIS_TITLES: Record<string, string> = {
   economicProjects: '经济合作项目分布分析',
   visitAreas: '访问区域重点分析',
   bufferAnalysis: '缓冲区分析',
-  distanceMeasure: '距离测量分析',
   nearestNeighbor: '最近邻分析',
   overlayAnalysis: '叠加分析',
   densityAnalysis: '密度分析',
@@ -1436,71 +2688,42 @@ function applyGeoAnalysis() {
     return;
   }
   
-  // 地理计算功能需要特殊处理，不进行图层匹配
-  const calculationFunctions = ['bufferAnalysis', 'distanceMeasure', 'nearestNeighbor', 'overlayAnalysis', 'densityAnalysis', 'routePlanning'];
-  if (calculationFunctions.includes(analysisKey)) {
-    // 对于计算功能，显示提示信息，引导用户使用相应的图层数据
-    const calculationTips: Record<string, string> = {
-      bufferAnalysis: '缓冲区分析：请先选择一个图层，然后使用地图工具创建缓冲区',
-      distanceMeasure: '距离测量：请在地图上选择两个点或要素进行距离测量',
-      nearestNeighbor: '最近邻分析：请选择一个目标点，系统将查找最近的设施',
-      overlayAnalysis: '叠加分析：请选择两个或多个图层进行叠加操作',
-      densityAnalysis: '密度分析：请选择一个点图层，系统将计算点密度分布',
-      routePlanning: '路线规划：请在地图上选择访问城市，系统将规划路线并评估安全性'
-    };
-    
-    window.$message?.info({
-      content: `${ANALYSIS_TITLES[analysisKey]}：${calculationTips[analysisKey] || '请使用地图工具栏进行交互操作'}`,
-      duration: 6
+  // 地理计算功能需要特殊处理，需要先选择图层
+  const layerSelectionFunctions = ['bufferAnalysis', 'nearestNeighbor', 'overlayAnalysis', 'densityAnalysis'];
+  if (layerSelectionFunctions.includes(analysisKey)) {
+    // 显示图层选择对话框
+    showLayerSelectionModal(analysisKey);
+    pendingGeoAnalysis.value = null;
+    if (route.query.geoAnalysis) {
+      const newQuery = { ...route.query } as Record<string, any>;
+      delete newQuery.geoAnalysis;
+      router.replace({ path: route.path, query: newQuery });
+    }
+    return;
+  }
+  
+  // 路线规划功能保持原有逻辑
+  if (analysisKey === 'routePlanning') {
+    // 对于路线规划，加载相关图层
+    const routeLayers = scene.nodes.filter(node => {
+      const nameCn = (node as any).nameCn || '';
+      return nameCn.includes('城市') || nameCn.includes('道路') || nameCn.includes('交通') || 
+             nameCn.includes('风险') || nameCn.includes('安全') || nameCn.includes('访问');
     });
     
-    // 对于密度分析，可以自动处理点图层
-    if (analysisKey === 'densityAnalysis') {
-      // 查找点图层（type === 0 表示点图层）
-      const pointLayers = scene.nodes.filter(node => {
-        const nameCn = (node as any).nameCn || '';
-        return node.type === 0 && (nameCn.includes('点') || nameCn.includes('设施') || nameCn.includes('人口'));
+    if (routeLayers.length > 0) {
+      window.$message?.success({
+        content: `找到 ${routeLayers.length} 个相关图层，可用于路线规划`,
+        duration: 4
       });
-      
-      if (pointLayers.length > 0) {
-        window.$message?.success({
-          content: `找到 ${pointLayers.length} 个点图层，可以用于密度分析`,
-          duration: 4
-        });
-        // 加载这些图层
-        pointLayers.forEach(node => {
-          scene?.loadNode(node.id);
-          scene?.openNode(node.id);
-          if (!checkedKeys.value.includes(node.id)) {
-            checkedKeys.value = [...checkedKeys.value, node.id];
-          }
-        });
-      }
-    }
-    
-    // 对于路线规划，加载相关图层
-    if (analysisKey === 'routePlanning') {
-      // 查找城市、道路、风险区域等图层
-      const routeLayers = scene.nodes.filter(node => {
-        const nameCn = (node as any).nameCn || '';
-        return nameCn.includes('城市') || nameCn.includes('道路') || nameCn.includes('交通') || 
-               nameCn.includes('风险') || nameCn.includes('安全') || nameCn.includes('访问');
+      // 加载这些图层
+      routeLayers.forEach(node => {
+        scene?.loadNode(node.id);
+        scene?.openNode(node.id);
+        if (!checkedKeys.value.includes(node.id)) {
+          checkedKeys.value = [...checkedKeys.value, node.id];
+        }
       });
-      
-      if (routeLayers.length > 0) {
-        window.$message?.success({
-          content: `找到 ${routeLayers.length} 个相关图层，可用于路线规划`,
-          duration: 4
-        });
-        // 加载这些图层
-        routeLayers.forEach(node => {
-          scene?.loadNode(node.id);
-          scene?.openNode(node.id);
-          if (!checkedKeys.value.includes(node.id)) {
-            checkedKeys.value = [...checkedKeys.value, node.id];
-          }
-        });
-      }
     }
     
     pendingGeoAnalysis.value = null;
@@ -1536,16 +2759,104 @@ function applyGeoAnalysis() {
     return;
   }
   
-  const ensureLayerPanelEntry = (nodeId: string) => {
-    const exists = (layerTreeData.value || []).some(item => String((item as any)?.key) === nodeId);
-    if (exists) return;
+  // 获取图层显示信息（统一处理图层名称、类型等）
+  const getLayerDisplayInfo = (nodeId: string) => {
     const node = scene?.findNodeById(nodeId) as any;
-    if (!node) return;
+    if (!node) {
+      return {
+        title: nodeId,
+        type: 6, // CUSTOM
+        typeName: '其他',
+        icon: 'material-symbols:layers-outline',
+        active: false,
+        loading: false
+      };
+    }
+    
     // 优先使用中文名称，字段可能是 nameCn 或 name_cn
     const title = node.nameCn || node.name_cn || node.name || nodeId;
+    
+    // 根据图层类型确定图标和类型名称
+    let typeName = '其他';
+    let icon = 'material-symbols:layers-outline';
+    
+    switch (node.type) {
+      case 0: // POINT
+        typeName = '点';
+        icon = 'material-symbols:place';
+        break;
+      case 1: // LINE
+        typeName = '线';
+        icon = 'material-symbols:route';
+        break;
+      case 2: // POLYGON
+        typeName = '面';
+        icon = 'material-symbols:polygon';
+        break;
+      case 3: // RASTER
+        typeName = '栅格';
+        icon = 'material-symbols:image';
+        break;
+      case 4: // THREED
+        typeName = '三维';
+        icon = 'material-symbols:view-in-ar';
+        break;
+      case 5: // UNDERWATER
+        typeName = '水下';
+        icon = 'material-symbols:water-drop';
+        break;
+      default:
+        typeName = '其他';
+        icon = 'material-symbols:layers-outline';
+        break;
+    }
+    
+    return {
+      title,
+      type: node.type || 6,
+      typeName,
+      icon,
+      active: node.active || false,
+      loading: node.loading || false
+    };
+  };
+  
+  // 更新图层管理面板中的图层信息（当图层状态变化时调用）
+  const updateLayerPanelEntry = (nodeId: string) => {
+    const layerTree = layerTreeData.value || [];
+    const index = layerTree.findIndex(item => String((item as any)?.key) === nodeId);
+    if (index === -1) return;
+    
+    const displayInfo = getLayerDisplayInfo(nodeId);
+    const entry = layerTree[index] as any;
+    if (entry) {
+      entry.title = displayInfo.title;
+      entry.type = displayInfo.type;
+      entry.typeName = displayInfo.typeName;
+      entry.icon = displayInfo.icon;
+      entry.active = displayInfo.active;
+      entry.loading = displayInfo.loading;
+      // 触发响应式更新
+      layerTreeData.value = [...layerTree];
+    }
+  };
+  
+  const ensureLayerPanelEntry = (nodeId: string) => {
+    const exists = (layerTreeData.value || []).some(item => String((item as any)?.key) === nodeId);
+    if (exists) {
+      // 如果已存在，更新图层信息
+      updateLayerPanelEntry(nodeId);
+      return;
+    }
+    const displayInfo = getLayerDisplayInfo(nodeId);
     const entry = {
       key: nodeId,
-      title: title,
+      title: displayInfo.title,
+      type: displayInfo.type,
+      typeName: displayInfo.typeName,
+      icon: displayInfo.icon,
+      active: displayInfo.active,
+      loading: displayInfo.loading,
       isLayer: true,
       children: []
     };
@@ -1918,10 +3229,70 @@ onActivated(async () => {
                   @check="onLayerCheckClick"
                 >
                   <template #title="{ title, key }">
-                    <div class="relative">
-                      <div @contextmenu.prevent="e => handleLayerRightClick(e, key as string, title)">
-                        <span v-if="key === '0-0-1-0'" style="color: #1890ff">{{ title }}</span>
-                        <span v-else>{{ title }}</span>
+                    <div class="relative flex items-center gap-2">
+                      <div 
+                        class="flex items-center gap-2 flex-1 min-w-0" 
+                        @contextmenu.prevent="e => handleLayerRightClick(e, key as string, title)"
+                      >
+                        <!-- 获取图层节点信息 -->
+                        <template v-if="scene">
+                          <!-- 图层图标 -->
+                          <IconifyIcon 
+                            :icon="getLayerDisplayInfo(String(key)).icon" 
+                            class="text-sm flex-shrink-0"
+                            :class="getLayerDisplayInfo(String(key)).active ? 'text-blue-400' : 'text-gray-400'"
+                          />
+                          
+                          <!-- 图层名称 -->
+                          <span 
+                            class="flex-1 min-w-0 truncate"
+                            :class="getLayerDisplayInfo(String(key)).active ? 'text-white font-medium' : 'text-gray-400'"
+                            :title="title"
+                          >
+                            {{ title }}
+                          </span>
+                          
+                          <!-- 图层类型标签 -->
+                          <span 
+                            v-if="getLayerDisplayInfo(String(key)).typeName && getLayerDisplayInfo(String(key)).typeName !== '其他'"
+                            class="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 flex-shrink-0"
+                            :title="`图层类型: ${getLayerDisplayInfo(String(key)).typeName}`"
+                          >
+                            {{ getLayerDisplayInfo(String(key)).typeName }}
+                          </span>
+                          
+                          <!-- 加载状态指示器 -->
+                          <IconifyIcon 
+                            v-if="getLayerDisplayInfo(String(key)).loading"
+                            icon="material-symbols:sync" 
+                            class="text-xs text-blue-400 animate-spin flex-shrink-0"
+                            title="加载中..."
+                          />
+                          
+                          <!-- 可见状态指示器 -->
+                          <IconifyIcon 
+                            v-if="getLayerDisplayInfo(String(key)).active && !getLayerDisplayInfo(String(key)).loading"
+                            icon="material-symbols:visibility" 
+                            class="text-xs text-green-400 flex-shrink-0"
+                            title="图层可见"
+                          />
+                          <IconifyIcon 
+                            v-else-if="!getLayerDisplayInfo(String(key)).active && !getLayerDisplayInfo(String(key)).loading"
+                            icon="material-symbols:visibility-off" 
+                            class="text-xs text-gray-500 flex-shrink-0"
+                            title="图层隐藏"
+                          />
+                        </template>
+                        <!-- 如果没有scene，显示默认样式 -->
+                        <template v-else>
+                          <IconifyIcon 
+                            icon="material-symbols:layers-outline" 
+                            class="text-sm flex-shrink-0 text-gray-400"
+                          />
+                          <span class="flex-1 min-w-0 truncate text-gray-400" :title="title">
+                            {{ title }}
+                          </span>
+                        </template>
                       </div>
                     </div>
                   </template>
@@ -2037,6 +3408,171 @@ onActivated(async () => {
 
     <!-- 点击其他地方隐藏图层菜单的遮罩 -->
     <div v-if="layerContextMenuVisible" class="fixed inset-0 z-[3000]" @click="hideLayerContextMenu"></div>
+
+    <!-- 图层选择对话框 -->
+    <AModal
+      v-model:open="layerSelectionModalVisible"
+      :title="currentAnalysisType ? `${ANALYSIS_TITLES[currentAnalysisType]} - 选择图层` : '选择图层'"
+      :mask-closable="false"
+      :z-index="2001"
+      width="700"
+      @ok="confirmLayerSelectionAndAnalyze"
+      @cancel="cancelLayerSelection"
+    >
+      <div class="py-4">
+        <div class="mb-4 text-gray-600">
+          <p v-if="currentAnalysisType === 'bufferAnalysis'">
+            请选择要创建缓冲区的图层（支持点、线、面图层）：
+          </p>
+          <p v-else-if="currentAnalysisType === 'nearestNeighbor' && !nearestNeighborTargetLayerId">
+            请选择目标图层（第一步）：
+          </p>
+          <p v-else-if="currentAnalysisType === 'nearestNeighbor' && nearestNeighborTargetLayerId">
+            已选择目标图层，请选择搜索图层（第二步）：
+          </p>
+          <p v-else-if="currentAnalysisType === 'overlayAnalysis'">
+            请选择要叠加的两个面图层：
+          </p>
+          <p v-else-if="currentAnalysisType === 'densityAnalysis'">
+            请选择要计算密度的点图层：
+          </p>
+        </div>
+        <ACheckboxGroup v-model:value="selectedLayerForAnalysis" class="w-full">
+          <div class="max-h-[300px] overflow-y-auto">
+            <div
+              v-for="layer in availableLayers"
+              :key="layer.id"
+              class="mb-2 flex items-center rounded border border-gray-200 p-3 hover:bg-gray-50"
+            >
+              <ACheckbox :value="layer.id" class="flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="font-medium">{{ layer.name }}</span>
+                  <span class="text-xs text-gray-500">
+                    ({{ layer.type === 0 ? '点' : layer.type === 1 ? '线' : layer.type === 2 ? '面' : '其他' }})
+                  </span>
+                </div>
+              </ACheckbox>
+            </div>
+          </div>
+        </ACheckboxGroup>
+        <div v-if="selectedLayerForAnalysis.length > 0" class="mt-4 text-sm text-gray-600">
+          已选择 {{ selectedLayerForAnalysis.length }} 个图层
+        </div>
+
+        <!-- 参数配置区域 -->
+        <ADivider class="my-4" />
+
+        <!-- 缓冲区分析参数 -->
+        <div v-if="currentAnalysisType === 'bufferAnalysis'" class="space-y-4">
+          <div class="text-base font-semibold">参数配置</div>
+          <AFormItem label="缓冲区距离" :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
+            <div class="flex gap-2">
+              <AInputNumber
+                v-model:value="analysisParams.bufferDistance"
+                :min="1"
+                :max="100000"
+                :precision="0"
+                style="width: 150px"
+                placeholder="距离"
+              />
+              <ASelect v-model:value="analysisParams.bufferUnit" style="width: 100px">
+                <ASelectOption value="meters">米</ASelectOption>
+                <ASelectOption value="kilometers">公里</ASelectOption>
+              </ASelect>
+            </div>
+          </AFormItem>
+        </div>
+
+        <!-- 最近邻分析参数 -->
+        <div v-if="currentAnalysisType === 'nearestNeighbor'" class="space-y-4">
+          <div class="text-base font-semibold">参数配置</div>
+          <AFormItem label="搜索半径" :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
+            <div class="flex gap-2">
+              <AInputNumber
+                v-model:value="analysisParams.nearestSearchRadius"
+                :min="0.1"
+                :max="1000"
+                :precision="2"
+                style="width: 150px"
+                placeholder="搜索半径"
+              />
+              <ASelect v-model:value="analysisParams.nearestUnit" style="width: 100px">
+                <ASelectOption value="kilometers">公里</ASelectOption>
+                <ASelectOption value="meters">米</ASelectOption>
+              </ASelect>
+            </div>
+            <div class="mt-1 text-xs text-gray-500">默认单位：公里，超过此半径的点将被忽略</div>
+          </AFormItem>
+          <AFormItem label="最大结果数" :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
+            <AInputNumber
+              v-model:value="analysisParams.nearestMaxResults"
+              :min="1"
+              :max="10"
+              :precision="0"
+              style="width: 150px"
+              placeholder="最大结果数"
+            />
+            <div class="mt-1 text-xs text-gray-500">每个目标点返回的最近邻数量</div>
+          </AFormItem>
+        </div>
+
+        <!-- 叠加分析参数 -->
+        <div v-if="currentAnalysisType === 'overlayAnalysis'" class="space-y-4">
+          <div class="text-base font-semibold">参数配置</div>
+          <AFormItem label="叠加操作" :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
+            <ARadioGroup v-model:value="analysisParams.overlayOperation">
+              <ARadio value="intersect">交集（Intersect）- 保留重叠区域</ARadio>
+              <ARadio value="union">并集（Union）- 合并所有区域</ARadio>
+              <ARadio value="difference">差集（Difference）- 第一个图层减去第二个图层</ARadio>
+            </ARadioGroup>
+            <div class="mt-2 text-xs text-gray-500">
+              <p v-if="analysisParams.overlayOperation === 'intersect'">
+                返回两个图层重叠的区域
+              </p>
+              <p v-else-if="analysisParams.overlayOperation === 'union'">
+                合并两个图层的所有区域
+              </p>
+              <p v-else-if="analysisParams.overlayOperation === 'difference'">
+                返回第一个图层中不在第二个图层中的区域
+              </p>
+            </div>
+          </AFormItem>
+        </div>
+
+        <!-- 密度分析参数 -->
+        <div v-if="currentAnalysisType === 'densityAnalysis'" class="space-y-4">
+          <div class="text-base font-semibold">参数配置</div>
+          <AFormItem label="搜索半径" :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
+            <div class="flex gap-2">
+              <AInputNumber
+                v-model:value="analysisParams.densitySearchRadius"
+                :min="0.1"
+                :max="100"
+                :precision="2"
+                style="width: 150px"
+                placeholder="搜索半径"
+              />
+              <ASelect v-model:value="analysisParams.densityUnit" style="width: 100px">
+                <ASelectOption value="kilometers">公里</ASelectOption>
+                <ASelectOption value="meters">米</ASelectOption>
+              </ASelect>
+            </div>
+            <div class="mt-1 text-xs text-gray-500">默认单位：公里，用于计算密度的搜索半径</div>
+          </AFormItem>
+          <AFormItem label="网格大小" :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
+            <AInputNumber
+              v-model:value="analysisParams.densityGridSize"
+              :min="50"
+              :max="1000"
+              :precision="0"
+              style="width: 150px"
+              placeholder="网格大小（米）"
+            />
+            <div class="mt-1 text-xs text-gray-500">用于生成密度网格的单元格大小（米）</div>
+          </AFormItem>
+        </div>
+      </div>
+    </AModal>
 
     <!-- 要素命名对话框 -->
     <AModal

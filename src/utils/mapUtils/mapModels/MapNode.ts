@@ -138,6 +138,13 @@ export default class MapNode {
     // 根据FeatureCollection中第一个要素的几何类型确定节点类型
     if (featureCollection.features && featureCollection.features.length > 0) {
       const firstFeature = featureCollection.features[0];
+      // 检查要素是否有有效的geometry
+      if (!firstFeature || !firstFeature.geometry || !firstFeature.geometry.type) {
+        console.error('无效的要素数据:', firstFeature);
+        node.type = NodeType.CUSTOM;
+        node.genLayers();
+        return node;
+      }
       const type = firstFeature.geometry.type;
       switch (type) {
         case 'Point': {

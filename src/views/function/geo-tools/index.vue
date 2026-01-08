@@ -122,13 +122,6 @@ const tools: ToolCard[] = [
     actions: [{ label: '在地图上使用', type: 'route', value: '/main', extra: 'bufferAnalysis' }]
   },
   {
-    title: '距离测量',
-    icon: 'mdi:ruler',
-    description: '测量两点间距离、点到线距离、区域间最短距离等，用于访问路线规划和距离评估。',
-    tags: ['距离', '测量', '路线'],
-    actions: [{ label: '在地图上使用', type: 'route', value: '/main', extra: 'distanceMeasure' }]
-  },
-  {
     title: '最近邻分析',
     icon: 'mdi:near-me',
     description: '查找指定位置最近的设施、边界、关键点等，快速定位最近的使馆、医院、机场等重要设施。',
