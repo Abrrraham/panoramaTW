@@ -79,7 +79,58 @@ type GeoAnalysisConfig = {
 
 const GEO_ANALYSIS_CONFIG: Record<string, GeoAnalysisConfig> = {
   geoOverview: {
-    layerNameKeywords: ['行政区划', '人口', '港口']
+    layerNameKeywords: ['行政区划', '人口', '港口', '城市', '基础设施']
+  },
+  terrainClimate: {
+    layerNameKeywords: ['地形', '地貌', 'DEM', '高程', '坡度', '气候', '降水', '温度']
+  },
+  transport: {
+    layerNameKeywords: ['道路', '铁路', '机场', '港口', '交通', '路网', '枢纽', '口岸']
+  },
+  resourceIndustry: {
+    layerNameKeywords: ['能源', '矿产', '农业', '工业', '产业', '资源', '园区', '工厂']
+  },
+  urbanLandUse: {
+    layerNameKeywords: ['城市', '建成区', '土地利用', '遥感', '建筑', '开发']
+  },
+  securityRisk: {
+    layerNameKeywords: ['地震', '洪水', '滑坡', '风险', '灾害', '安全', '监测', '预警']
+  },
+  populationSocial: {
+    layerNameKeywords: ['人口', '族群', '教育', '医疗', '社会', '设施', '分布']
+  },
+  borderRelations: {
+    layerNameKeywords: ['边境', '边界', '口岸', '接壤', '通道', '争议', '合作']
+  },
+  realtimeInfo: {
+    layerNameKeywords: ['实时', '动态', '热点', '舆情', '监测', '传感器']
+  },
+  keyFacilities: {
+    layerNameKeywords: ['使馆', '领事馆', '医院', '医疗', '重要机构', '政府', '国际组织', '设施']
+  },
+  economicProjects: {
+    layerNameKeywords: ['一带一路', '投资项目', '中资企业', '合作项目', '工业园区', '经济', '投资']
+  },
+  visitAreas: {
+    layerNameKeywords: ['访问', '城市', '重点区域', '热点', '活动', '区域', '中心']
+  },
+  bufferAnalysis: {
+    layerNameKeywords: ['缓冲区', '影响范围', '服务范围']
+  },
+  distanceMeasure: {
+    layerNameKeywords: ['距离', '测量', '路线']
+  },
+  nearestNeighbor: {
+    layerNameKeywords: ['最近邻', '查找', '定位']
+  },
+  overlayAnalysis: {
+    layerNameKeywords: ['叠加', '交集', '并集']
+  },
+  densityAnalysis: {
+    layerNameKeywords: ['密度', '热点', '聚集']
+  },
+  routePlanning: {
+    layerNameKeywords: ['访问路线', '外交', '行程规划', '安全路线', '道路', '交通', '城市']
   }
 };
 
@@ -1357,11 +1408,110 @@ watch(
   { immediate: true }
 );
 
+// 分析功能标题映射
+const ANALYSIS_TITLES: Record<string, string> = {
+  geoOverview: '地理概览分析',
+  terrainClimate: '地形地貌与气候分析',
+  transport: '交通与通行条件分析',
+  resourceIndustry: '资源与产业分布分析',
+  urbanLandUse: '城市发展与土地利用分析',
+  securityRisk: '安全与风险评估分析',
+  populationSocial: '人口与社会指标分析',
+  borderRelations: '对外关系与边境态势分析',
+  realtimeInfo: '实时/动态信息分析',
+  keyFacilities: '关键设施定位分析',
+  economicProjects: '经济合作项目分布分析',
+  visitAreas: '访问区域重点分析',
+  bufferAnalysis: '缓冲区分析',
+  distanceMeasure: '距离测量分析',
+  nearestNeighbor: '最近邻分析',
+  overlayAnalysis: '叠加分析',
+  densityAnalysis: '密度分析',
+  routePlanning: '外交访问路线规划'
+};
+
 function applyGeoAnalysis() {
   const analysisKey = pendingGeoAnalysis.value;
   if (!analysisKey || !scene) {
     return;
   }
+  
+  // 地理计算功能需要特殊处理，不进行图层匹配
+  const calculationFunctions = ['bufferAnalysis', 'distanceMeasure', 'nearestNeighbor', 'overlayAnalysis', 'densityAnalysis', 'routePlanning'];
+  if (calculationFunctions.includes(analysisKey)) {
+    // 对于计算功能，显示提示信息，引导用户使用相应的图层数据
+    const calculationTips: Record<string, string> = {
+      bufferAnalysis: '缓冲区分析：请先选择一个图层，然后使用地图工具创建缓冲区',
+      distanceMeasure: '距离测量：请在地图上选择两个点或要素进行距离测量',
+      nearestNeighbor: '最近邻分析：请选择一个目标点，系统将查找最近的设施',
+      overlayAnalysis: '叠加分析：请选择两个或多个图层进行叠加操作',
+      densityAnalysis: '密度分析：请选择一个点图层，系统将计算点密度分布',
+      routePlanning: '路线规划：请在地图上选择访问城市，系统将规划路线并评估安全性'
+    };
+    
+    window.$message?.info({
+      content: `${ANALYSIS_TITLES[analysisKey]}：${calculationTips[analysisKey] || '请使用地图工具栏进行交互操作'}`,
+      duration: 6
+    });
+    
+    // 对于密度分析，可以自动处理点图层
+    if (analysisKey === 'densityAnalysis') {
+      // 查找点图层（type === 0 表示点图层）
+      const pointLayers = scene.nodes.filter(node => {
+        const nameCn = (node as any).nameCn || '';
+        return node.type === 0 && (nameCn.includes('点') || nameCn.includes('设施') || nameCn.includes('人口'));
+      });
+      
+      if (pointLayers.length > 0) {
+        window.$message?.success({
+          content: `找到 ${pointLayers.length} 个点图层，可以用于密度分析`,
+          duration: 4
+        });
+        // 加载这些图层
+        pointLayers.forEach(node => {
+          scene?.loadNode(node.id);
+          scene?.openNode(node.id);
+          if (!checkedKeys.value.includes(node.id)) {
+            checkedKeys.value = [...checkedKeys.value, node.id];
+          }
+        });
+      }
+    }
+    
+    // 对于路线规划，加载相关图层
+    if (analysisKey === 'routePlanning') {
+      // 查找城市、道路、风险区域等图层
+      const routeLayers = scene.nodes.filter(node => {
+        const nameCn = (node as any).nameCn || '';
+        return nameCn.includes('城市') || nameCn.includes('道路') || nameCn.includes('交通') || 
+               nameCn.includes('风险') || nameCn.includes('安全') || nameCn.includes('访问');
+      });
+      
+      if (routeLayers.length > 0) {
+        window.$message?.success({
+          content: `找到 ${routeLayers.length} 个相关图层，可用于路线规划`,
+          duration: 4
+        });
+        // 加载这些图层
+        routeLayers.forEach(node => {
+          scene?.loadNode(node.id);
+          scene?.openNode(node.id);
+          if (!checkedKeys.value.includes(node.id)) {
+            checkedKeys.value = [...checkedKeys.value, node.id];
+          }
+        });
+      }
+    }
+    
+    pendingGeoAnalysis.value = null;
+    if (route.query.geoAnalysis) {
+      const newQuery = { ...route.query } as Record<string, any>;
+      delete newQuery.geoAnalysis;
+      router.replace({ path: route.path, query: newQuery });
+    }
+    return;
+  }
+  
   const config = GEO_ANALYSIS_CONFIG[analysisKey];
   if (!config) {
     pendingGeoAnalysis.value = null;
@@ -1376,33 +1526,214 @@ function applyGeoAnalysis() {
   };
   const candidates = scene.nodes.filter(node => matchesNode(node));
   if (!candidates.length) {
+    window.$message?.info('未找到匹配的分析图层，请确认数据是否已上传');
+    pendingGeoAnalysis.value = null;
+    if (route.query.geoAnalysis) {
+      const newQuery = { ...route.query } as Record<string, any>;
+      delete newQuery.geoAnalysis;
+      router.replace({ path: route.path, query: newQuery });
+    }
     return;
   }
+  
   const ensureLayerPanelEntry = (nodeId: string) => {
     const exists = (layerTreeData.value || []).some(item => String((item as any)?.key) === nodeId);
     if (exists) return;
     const node = scene?.findNodeById(nodeId) as any;
     if (!node) return;
+    // 优先使用中文名称，字段可能是 nameCn 或 name_cn
+    const title = node.nameCn || node.name_cn || node.name || nodeId;
     const entry = {
       key: nodeId,
-      title: node.nameCn || node.name || nodeId,
+      title: title,
       isLayer: true,
       children: []
     };
     layerTreeData.value = [entry, ...(layerTreeData.value || [])] as any;
   };
+  
+  // 第一步：先确保匹配的图层都在图层管理面板中
+  candidates.forEach(node => {
+    ensureLayerPanelEntry(node.id);
+  });
+  
+  // 第二步：隐藏所有无关图层（取消勾选并关闭，但保留在面板中）
+  const candidateIds = new Set(candidates.map(node => node.id));
+  const allLayerKeys = checkedKeys.value.slice(); // 复制当前勾选的图层列表
+  allLayerKeys.forEach(layerKey => {
+    // 如果当前图层不在匹配的图层列表中，则隐藏它（取消勾选）
+    if (!candidateIds.has(layerKey)) {
+      try {
+        scene?.closeNode(layerKey);
+        checkedKeys.value = checkedKeys.value.filter(key => key !== layerKey);
+      } catch (error) {
+        console.warn('隐藏无关图层失败', layerKey, error);
+      }
+    }
+  });
+  
+  // 第三步：加载并激活匹配的图层
   candidates.forEach(node => {
     try {
+      // 确保图层已加载
       scene?.loadNode(node.id);
+      // 打开图层（显示）
       scene?.openNode(node.id);
+      // 确保勾选状态
       if (!checkedKeys.value.includes(node.id)) {
         checkedKeys.value = [...checkedKeys.value, node.id];
       }
-      ensureLayerPanelEntry(node.id);
     } catch (error) {
       console.warn('激活地理分析图层失败', node.id, error);
     }
   });
+  
+  // 显示分析结果提示
+  const analysisTitle = ANALYSIS_TITLES[analysisKey] || '地理分析';
+  const layerNames = candidates.map(node => (node as any).nameCn || node.name || node.id).join('、');
+  window.$message?.success({
+    content: `${analysisTitle}：已加载 ${candidates.length} 个相关图层（${layerNames}）`,
+    duration: 4
+  });
+  
+  // 第三步：自动调整视图以显示所有匹配的图层
+  if (candidates.length > 0 && map) {
+    // 等待图层加载完成后再调整视图
+    setTimeout(async () => {
+      try {
+        const bounds = new mapboxgl.LngLatBounds();
+        let hasBounds = false;
+        let processedCount = 0;
+        
+        // 尝试从所有匹配的图层中获取要素范围
+        for (const node of candidates) {
+          try {
+            // 确保图层已激活
+            if (!node.active) {
+              scene?.loadNode(node.id);
+              scene?.openNode(node.id);
+              await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            
+            // 等待图层渲染
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // 方法1：尝试查询图层要素
+            const features = scene?.queryLayerFeatures(node.id);
+            if (features && features.length > 0) {
+              features.forEach((feature: any) => {
+                if (feature.geometry) {
+                  try {
+                    switch (feature.geometry.type) {
+                      case 'Point':
+                        bounds.extend(feature.geometry.coordinates as [number, number]);
+                        hasBounds = true;
+                        break;
+                      case 'LineString':
+                        feature.geometry.coordinates.forEach((coord: [number, number]) => bounds.extend(coord));
+                        hasBounds = true;
+                        break;
+                      case 'Polygon':
+                        if (feature.geometry.coordinates[0]) {
+                          feature.geometry.coordinates[0].forEach((coord: [number, number]) => bounds.extend(coord));
+                          hasBounds = true;
+                        }
+                        break;
+                      case 'MultiPoint':
+                        feature.geometry.coordinates.forEach((coord: [number, number]) => bounds.extend(coord));
+                        hasBounds = true;
+                        break;
+                      case 'MultiLineString':
+                        feature.geometry.coordinates.forEach((line: [number, number][]) =>
+                          line.forEach((coord: [number, number]) => bounds.extend(coord))
+                        );
+                        hasBounds = true;
+                        break;
+                      case 'MultiPolygon':
+                        feature.geometry.coordinates.forEach((polygon: [number, number][][]) => {
+                          if (polygon[0]) {
+                            polygon[0].forEach((coord: [number, number]) => bounds.extend(coord));
+                            hasBounds = true;
+                          }
+                        });
+                        break;
+                    }
+                  } catch (error) {
+                    console.warn('处理要素几何时出错', node.id, error);
+                  }
+                }
+              });
+              processedCount++;
+            }
+            
+            // 方法2：如果查询要素失败，尝试查询渲染的要素
+            if (!hasBounds && node.layers && node.layers.length > 0) {
+              const layerIds = node.layers.map((l: any) => l.id).filter((id: string) => map.getLayer(id));
+              if (layerIds.length > 0) {
+                // 等待地图渲染完成
+                map.once('idle', () => {
+                  try {
+                    const renderedFeatures = map.queryRenderedFeatures({ layers: layerIds });
+                    if (renderedFeatures && renderedFeatures.length > 0) {
+                      renderedFeatures.forEach((feature: any) => {
+                        if (feature.geometry) {
+                          try {
+                            if (feature.geometry.type === 'Point') {
+                              bounds.extend(feature.geometry.coordinates as [number, number]);
+                              hasBounds = true;
+                            } else if (feature.geometry.type === 'LineString') {
+                              feature.geometry.coordinates.forEach((coord: [number, number]) => bounds.extend(coord));
+                              hasBounds = true;
+                            } else if (feature.geometry.type === 'Polygon' && feature.geometry.coordinates[0]) {
+                              feature.geometry.coordinates[0].forEach((coord: [number, number]) => bounds.extend(coord));
+                              hasBounds = true;
+                            }
+                          } catch (error) {
+                            console.warn('处理渲染要素几何时出错', node.id, error);
+                          }
+                        }
+                      });
+                      processedCount++;
+                    }
+                  } catch (error) {
+                    console.warn('查询渲染要素失败', node.id, error);
+                  }
+                });
+              }
+            }
+          } catch (error) {
+            console.warn('获取图层范围失败', node.id, error);
+          }
+        }
+        
+        // 等待所有图层处理完成或超时
+        const maxWaitTime = 3000; // 最多等待3秒
+        const startTime = Date.now();
+        while (processedCount < candidates.length && (Date.now() - startTime) < maxWaitTime) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        
+        // 如果成功获取到范围，调整视图
+        if (hasBounds && !bounds.isEmpty()) {
+          const sw = bounds.getSouthWest();
+          const ne = bounds.getNorthEast();
+          if (sw.lng !== ne.lng || sw.lat !== ne.lat) {
+            map.fitBounds(bounds, {
+              padding: { top: 100, bottom: 100, left: 100, right: 100 },
+              duration: 1500,
+              maxZoom: 14
+            });
+            console.log('已自动缩放到分析图层范围');
+          }
+        } else {
+          console.warn('无法获取图层范围，无法自动缩放');
+        }
+      } catch (error) {
+        console.warn('自动调整视图失败', error);
+      }
+    }, 1000); // 给图层加载一些时间
+  }
+  
   pendingGeoAnalysis.value = null;
   if (route.query.geoAnalysis) {
     const newQuery = { ...route.query } as Record<string, any>;

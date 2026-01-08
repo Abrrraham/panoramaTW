@@ -16,6 +16,8 @@ const { otherBaseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
 
 // 调试信息
 console.log('=== API 配置调试 ===');
+console.log('import.meta.env.VITE_SERVICE_BASE_URL:', import.meta.env.VITE_SERVICE_BASE_URL);
+console.log('envBaseURL:', envBaseURL);
 console.log('isHttpProxy:', isHttpProxy);
 console.log('baseURL:', baseURL);
 console.log('otherBaseURL:', otherBaseURL);
